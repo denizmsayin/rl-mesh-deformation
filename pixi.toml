@@ -1,0 +1,44 @@
+[workspace]
+name = "rl-mesh-deformation"
+version = "0.1.0"
+description = "rl project environment"
+platforms = ["linux-64"]
+channels = ["nvidia", "conda-forge"]
+
+
+[dependencies]
+python = "3.12.*"
+
+# 1. Base Python & Compilation tools
+setuptools = "*"
+wheel = "*"
+ninja = "*"
+pip = "*"
+
+gcc="13.*"
+gxx="13.*"
+
+# Other scientific libraries
+pandas = ">=2"
+numpy = ">=2"
+matplotlib = "*"
+tqdm = "*"
+ipython = "*"
+plotly = "*"
+trimesh = "*"
+uniplot = "*"
+scikit-learn = "*"
+scikit-image = "*"
+
+[pypi-dependencies]
+torch = ">=2.8, <2.9"
+torchvision = "*"
+
+einops = "*"
+vtk = "*"
+manifold3d = "*"
+pytest = "*"
+
+# for pytorch3d compilation
+portalocker = "*"
+iopath = "*"
