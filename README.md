@@ -12,11 +12,16 @@ This will resolve and install the environment in the local project directory. Yo
 
 Environment specifications are stored inside `pixi.toml`. There's also a lockfile `pixi.lock` that `pixi` itself generates after environment resolution for pinning package versions. **Both files must be committed and up-to-date in the repository to ensure environment consistency.**
 
+Some libraries are more of a pain to install than others, especially if we have to consider possible GPU usage. Take a look at `[tasks]` under `pixi.toml` for such libraries. We currently have a build-from-source command for pytorch3d, and you can install it by:
+```sh
+pixi run pytorch3d-install
+```
+
 ## TODOs (17-04)
 
 Run the pytorch3d notebook: https://github.com/facebookresearch/pytorch3d/blob/main/docs/tutorials/deform_source_mesh_to_target_mesh.ipynb
 
-View results with some software like MeshLab, try to understand what's going on, fiddle with it a litt!
+View results with some software like MeshLab, try to understand what's going on, fiddle with it a little!
 
 ### Data Generation
 

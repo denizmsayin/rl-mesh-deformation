@@ -5,7 +5,6 @@ description = "rl project environment"
 platforms = ["linux-64", "osx-arm64"]
 channels = ["conda-forge"]
 
-
 [dependencies]
 python = "3.12.*"
 
@@ -24,12 +23,13 @@ ipython = "*"
 plotly = "*"
 trimesh = "*"
 uniplot = "*"
+
+pytorch = "*"
+torchvision = "*"
 scikit-learn = "*"
 scikit-image = "*"
 
 [pypi-dependencies]
-torch = ">=2.8, <2.9"
-torchvision = "*"
 
 einops = "*"
 vtk = "*"
@@ -39,3 +39,6 @@ pytest = "*"
 # for pytorch3d compilation
 portalocker = "*"
 iopath = "*"
+
+[tasks]
+pytorch3d-install = { cmd = "pip install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git@v0.7.9", env = { MAX_JOBS = "4" } }
