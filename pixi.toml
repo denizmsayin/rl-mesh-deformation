@@ -29,6 +29,8 @@ pytorch = "*"
 torchvision = "*"
 scikit-learn = "*"
 scikit-image = "*"
+hydra-core = "*"
+omegaconf = "*"
 
 [pypi-dependencies]
 
