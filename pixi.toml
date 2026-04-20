@@ -2,7 +2,7 @@
 name = "rl-mesh-deformation"
 version = "0.1.0"
 description = "rl project environment"
-platforms = ["linux-64", "osx-arm64"]
+platforms = ["linux-64", "osx-arm64", "win-64"]
 channels = ["conda-forge"]
 
 [dependencies]
@@ -13,6 +13,7 @@ setuptools = "*"
 wheel = "*"
 ninja = "*"
 pip = "*"
+
 
 # Other scientific libraries
 pandas = ">=2"
