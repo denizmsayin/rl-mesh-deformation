@@ -10,32 +10,16 @@ def nearest_point_matching(v_source, v_target):
     return np.argmin(sq_dist, axis=1)
 
 
-def closest_divisor(n, target):
-    """Return divisor of n that is closest to target."""
-    target = max(1, min(int(round(target)), n))
-    divisors = [d for d in range(1, n + 1) if n % d == 0]
-    return min(divisors, key=lambda d: (abs(d - target), -d))
-
-
 def evenly_spaced_indices(n, desired_count):
-    """Pick evenly spaced indices using a count that divides n."""
-    if n <= 0:
-        return np.array([], dtype=int)
-    count = closest_divisor(n, desired_count)
-    step = n // count
-    return np.arange(0, n, step, dtype=int)[:count]
-
+    count = max(1, min(int(round(desired_count)), n))
+    return np.unique(np.round(np.linspace(0, n - 1, count)).astype(int))
 
 def draw_edges(ax, vertices, edges, color):
-    if len(edges) == 0:
-        return
     seg = np.stack((vertices[edges[:, 0]], vertices[edges[:, 1]]), axis=1)
     ax.add_collection(LineCollection(seg, colors=color, linewidths=1.0, alpha=0.55, zorder=1))
 
 
 def draw_matching_lines(ax, v_s, v_t, match_idx, line_colors, line_width, line_alpha, line_indices):
-    if len(line_indices) == 0:
-        return
     seg = np.stack((v_s[line_indices], v_t[match_idx[line_indices]]), axis=1)
     colors = np.array(line_colors[line_indices], dtype=float)
     colors[:, 3] = line_alpha
@@ -45,8 +29,6 @@ def draw_matching_lines(ax, v_s, v_t, match_idx, line_colors, line_width, line_a
 
 
 def draw_sparse_arrows(ax, v_s, v_t, match_idx, arrow_colors, line_width, line_alpha, arrow_indices):
-    if len(arrow_indices) == 0:
-        return
     arrow_lw = max(line_width * 2.2, 0.75)
     for i in arrow_indices:
         color = np.array(arrow_colors[i], dtype=float)
@@ -130,7 +112,7 @@ def visualize_matching(
 
     if show_arrows and len(line_indices) > 0:
         desired_arrows = int(round(len(line_indices) * arrow_percentage))
-        arrow_count = closest_divisor(len(line_indices), max(1, desired_arrows))
+        arrow_count = max(1, min(int(round(desired_arrows)), len(line_indices)))
         arrow_local = evenly_spaced_indices(len(line_indices), arrow_count)
         arrow_indices = line_indices[arrow_local]
         draw_sparse_arrows(
