@@ -12,13 +12,24 @@ class BaseShape(ABC):
     def __init__(self, num_points=100):
         if num_points is not None:
             self.points = self.compute_points(num_points)
+            self.edges = self.compute_edges()
 
     @abstractmethod
     def compute_points(self, num_points=100):
         pass
 
+    def compute_edges(self):
+        n = len(self.points)
+        return np.column_stack((np.arange(n), (np.arange(n) + 1) % n)).astype(int)
+
     def get_points(self):
         return self.points
+
+    def get_edges(self):
+        return self.edges
+
+    def to_arrays(self):
+        return self.points, self.edges
 
 
 class Circle(BaseShape):
@@ -26,7 +37,7 @@ class Circle(BaseShape):
         angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
         x = np.cos(angles)
         y = np.sin(angles)
-        return x, y
+        return np.stack((x, y), axis=-1)
     
 
 class Hexagon(BaseShape):
@@ -52,7 +63,7 @@ class Hexagon(BaseShape):
             x[start:end] = x_edge
             y[start:end] = y_edge
 
-        return x, y
+        return np.stack((x, y), axis=-1)
 
 
 class Triangle(BaseShape):
@@ -78,7 +89,7 @@ class Triangle(BaseShape):
             x[start:end] = x_edge
             y[start:end] = y_edge
 
-        return x, y
+        return np.stack((x, y), axis=-1)
 
 
 class Star(BaseShape):
@@ -116,20 +127,76 @@ class Star(BaseShape):
             x[start:end] = x_edge
             y[start:end] = y_edge
 
-        return x, y
+        return np.stack((x, y), axis=-1)
+
+#the reason of this class is to cache base shapes and not recompute them each time
+class ShapeGenerator:
+    def __init__(self):
+        self.shape_classes = {
+            'circle': Circle,
+            'hexagon': Hexagon,
+            'triangle': Triangle,
+            'star': Star,
+        }
+        self.base_shape_cache = {}
+
+    def get_base_shape(self, shape_name, num_points=100, **shape_kwargs):
+        key = (shape_name, num_points, tuple(sorted(shape_kwargs.items())))
+        if key not in self.base_shape_cache:
+            if shape_name not in self.shape_classes:
+                raise ValueError(f"Unsupported shape: {shape_name}")
+            self.base_shape_cache[key] = self.shape_classes[shape_name](
+                num_points=num_points, **shape_kwargs
+            )
+        return self.base_shape_cache[key]
+
+    def build_shape(self, shape_name, num_points=100, center=(0.0, 0.0), scale=1.0, angle=0.0, **shape_kwargs):
+        base_shape = self.get_base_shape(shape_name, num_points, **shape_kwargs)
+        return TransformedShape(base_shape,translation=center,scale=scale,angle=angle,)
+
+    def build_random_shape(self, instance_name, shape_spec, transform_cfg):
+        shape_name = shape_spec.get('shape', instance_name)
+        num_points = shape_spec.get('num_points', 100)
+        shape_kwargs = {
+            k: v for k, v in shape_spec.items()
+            if k not in ('shape', 'num_points')
+        }
+
+        center = (
+            random.uniform(*transform_cfg.translation_range),
+            random.uniform(*transform_cfg.translation_range),
+        )
+        scale = random.uniform(*transform_cfg.scale_range)
+        angle = 0.0 if shape_name == 'circle' else np.deg2rad(
+            random.uniform(*transform_cfg.rotation_range)
+        )
+
+        return self.build_shape(shape_name=shape_name,num_points=num_points,center=center,scale=scale,angle=angle,**shape_kwargs)
+
+    def generate_shapes(self, shapes, transform_cfg):
+        V = []
+        L = []
+
+        for instance_name, shape_spec in shapes.items():
+            shape = self.build_random_shape(instance_name, shape_spec, transform_cfg)
+            vertices, edges = shape.to_arrays()
+            V.append(vertices)
+            L.append(edges)
+
+        return V, L
 
 
 class TransformedShape:
-    def __init__(self, shape: BaseShape, translation: tuple = (0.0, 0.0), scale: float = 1.0, angle: float = 0.0):
-        self.shape = shape
+    def __init__(self, baseshape: BaseShape, translation: tuple = (0.0, 0.0), scale: float = 1.0, angle: float = 0.0):
+        self.baseshape = baseshape # if the same across different instances, it should not get copied.
         self.translation = np.asarray(translation)
         self.scale = scale
         self.angle = angle
         self.points = self.compute_points()
+        #self.edges = np.asarray(self.baseshape.get_edges(), dtype=int)
 
     def compute_points(self):
-        x, y = self.shape.get_points()
-        points = np.stack((x, y), axis=-1)
+        points = np.asarray(self.baseshape.get_points(), dtype=float)
 
         if self.angle != 0.0:
             c, s = np.cos(self.angle), np.sin(self.angle)
@@ -138,78 +205,18 @@ class TransformedShape:
 
         points = points * self.scale
         points = points + self.translation
-        return points[:, 0], points[:, 1]
+        return points
 
     def get_points(self):
         return self.points
 
+    def get_edges(self):
+        return self.baseshape.get_edges()
 
-class GenerateShape:
-    def __init__(self, shapes: dict, transform_cgf: DictConfig):
-        self.shapes = shapes
-        self.shape_classes = {
-            'circle': Circle,
-            'hexagon': Hexagon,
-            'triangle': Triangle,
-            'star': Star,
-            #'polygon': Polygon,
-            #'ellipse': Ellipse,
-            #'heart': Heart,
-            #'cross': Cross,
-            #'imageshape': ImageShape #something generic, maybe with a path to an image file that can be loaded and converted to points
-        }
-        self.base_shape_cache = {}
-        translation_range = transform_cgf.translation_range
-        scale_range = transform_cgf.scale_range
-        rotation_range = transform_cgf.rotation_range
-        self.transformations = {
-            'translation': lambda: (random.uniform(*translation_range), random.uniform(*translation_range)),
-            'scale': lambda: random.uniform(*scale_range),
-            'rotation': lambda: np.deg2rad(random.uniform(*rotation_range))
-        }
+    def to_arrays(self):
+        return self.points, self.get_edges()
 
-    def get_base_shape(self, shape_name: str, num_points: int, shape_kwargs: dict | None = None):
-        shape_kwargs = shape_kwargs or {}
-        key = (shape_name, num_points, tuple(sorted(shape_kwargs.items())))
-        if key not in self.base_shape_cache:
-            if shape_name not in self.shape_classes:
-                raise ValueError(f"Unsupported shape: {shape_name}")
-            self.base_shape_cache[key] = self.shape_classes[shape_name](num_points=num_points, **shape_kwargs)
-        return self.base_shape_cache[key]
-       
-    def generate_shapes(self):
-        V=[]
-        L=[]
 
-        for instance_name, shape_spec in self.shapes.items():
-            if isinstance(shape_spec, dict):
-                shape_name = shape_spec.get('shape', instance_name)
-                num_points = shape_spec.get('num_points', 100)
-                shape_kwargs = {k: v for k, v in shape_spec.items() if k not in ('shape', 'num_points')}
-            else:
-                shape_name = instance_name
-                num_points = shape_spec
-                shape_kwargs = {}
-
-            translation = self.transformations['translation']()
-            scale = self.transformations['scale']()
-            rotation = self.transformations['rotation']()
-
-            base_shape = self.get_base_shape(shape_name, num_points, shape_kwargs)
-            angle = 0.0 if shape_name == 'circle' else rotation
-            shape = TransformedShape(base_shape, translation=translation, scale=scale, angle=angle)
-
-            x, y = shape.get_points()
-            coords = np.stack((x, y), axis=-1)
-            V.append(coords)  # vertices of current shape
-            L.append(self.connectivity(coords))  # connectivity of current shape
-        return V, L
-
-    def connectivity(self, vertices):
-        edges = []
-        for i in range(len(vertices)):
-            edges.append((i, (i + 1) % len(vertices)))  # close the polygon
-        return edges
            
 @hydra.main(version_base=None, config_path="../configs", config_name="generate")
 def main(cfg: DictConfig):
@@ -222,8 +229,8 @@ def main(cfg: DictConfig):
         'star_5': {'shape': 'star', 'num_points': 60, 'n_tips': 5, 'inner_radius': 0.45},
         'star_12': {'shape': 'star', 'num_points': 2500, 'n_tips': 12, 'inner_radius': 0.6},
     }
-    shape_generator = GenerateShape(shapes, cfg)
-    V, L = shape_generator.generate_shapes()
+    shape_generator = ShapeGenerator()
+    V, L = shape_generator.generate_shapes(shapes, cfg)
     print("Shapes generated successfully!")
     fig, ax = plt.subplots()
     colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple','tab:cyan']
