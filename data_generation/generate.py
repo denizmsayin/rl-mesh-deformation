@@ -1,4 +1,5 @@
 import random 
+from abc import ABC, abstractmethod
 import numpy as np
 import matplotlib.pyplot as plt
 from omegaconf import DictConfig
@@ -7,52 +8,37 @@ import hydra
 
 
 
-class Circle():
-    def __init__(self, translation: tuple, scale: float, num_points=100):
-        self.radius = 1.0
-        self.center = (0.0, 0.0)
-        dx = translation[0]
-        dy = translation[1]
-        self.translate(dx, dy)
-        self.scale(scale)
+class BaseShape(ABC):
+    def __init__(self, num_points=100):
         if num_points is not None:
             self.points = self.compute_points(num_points)
 
-    def get_radius(self):
-        return self.radius
-    
-    def get_center(self):
-        return self.center
-    
-    def translate(self, dx, dy):
-        self.center = (self.center[0] + dx, self.center[1] + dy)
-
-    def scale(self, alpha):
-        self.radius *= alpha
-
+    @abstractmethod
     def compute_points(self, num_points=100):
-        angles = np.linspace(0, 2 * np.pi, num_points)
-        x = self.center[0] + self.radius * np.cos(angles)
-        y = self.center[1] + self.radius * np.sin(angles)
-        return x, y
-    
+        pass
+
     def get_points(self):
         return self.points
+
+
+class Circle(BaseShape):
+    def compute_points(self, num_points=100):
+        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+        x = np.cos(angles)
+        y = np.sin(angles)
+        return x, y
     
-class Hexagon(Circle):
-    def __init__(self, angle: float, translation: tuple, scale: float, num_points=100):
-        super().__init__(translation, scale, num_points = None)
-        self.angle = angle
-        self.points = self.compute_points(num_points, angle)
 
-    def compute_points(self, num_points=100, angle=0.0):
-        angles = np.linspace(0, 2 * np.pi, 7)[:-1] + angle
-        xx = self.center[0] + self.radius * np.cos(angles)
-        yy = self.center[1] + self.radius * np.sin(angles)
+class Hexagon(BaseShape):
+    def compute_points(self, num_points=100):
+        angles = np.linspace(0, 2 * np.pi, 7)[:-1]
+        xx = np.cos(angles)
+        yy = np.sin(angles)
 
-        points_per_edge = num_points // 6
-        x = np.array([])
-        y = np.array([])
+        points_per_edge = max(1, num_points // 6)
+        total_points = 6 * points_per_edge
+        x = np.empty(total_points, dtype=float)
+        y = np.empty(total_points, dtype=float)
         for i in range(6):
             x_i, y_i = xx[i], yy[i]
             x1, y1 = xx[(i + 1) % 6], yy[(i + 1) % 6]
@@ -61,26 +47,24 @@ class Hexagon(Circle):
             x_edge = x_i + t * (x1 - x_i)
             y_edge = y_i + t * (y1 - y_i)
 
-            x = np.append(x, x_edge)
-            y = np.append(y, y_edge)
+            start = i * points_per_edge
+            end = start + points_per_edge
+            x[start:end] = x_edge
+            y[start:end] = y_edge
 
-        return np.array(x), np.array(y)
+        return x, y
 
-class Triangle(Circle):
-    def __init__(self, angle: float, translation: tuple, scale: float, num_points=100):
-        super().__init__(translation, scale, num_points = None)
-        self.angle = angle
-        self.points = self.compute_points(num_points, angle)
 
-    def compute_points(self, num_points=100, angle=0.0):
-        angles = np.linspace(0, 2 * np.pi, 4)[:-1] + angle
-       
-        xx = self.center[0] + self.radius * np.cos(angles)
-        yy = self.center[1] + self.radius * np.sin(angles)
+class Triangle(BaseShape):
+    def compute_points(self, num_points=100):
+        angles = np.linspace(0, 2 * np.pi, 4)[:-1]
+        xx = np.cos(angles)
+        yy = np.sin(angles)
 
-        points_per_edge = num_points // 3
-        x = np.array([])
-        y = np.array([])
+        points_per_edge = max(1, num_points // 3)
+        total_points = 3 * points_per_edge
+        x = np.empty(total_points, dtype=float)
+        y = np.empty(total_points, dtype=float)
         for i in range(3):
             x_i, y_i = xx[i], yy[i]
             x1, y1 = xx[(i + 1) % 3], yy[(i + 1) % 3]
@@ -89,23 +73,64 @@ class Triangle(Circle):
             x_edge = x_i + t * (x1 - x_i)
             y_edge = y_i + t * (y1 - y_i)
 
-            x = np.append(x, x_edge)
-            y = np.append(y, y_edge)
+            start = i * points_per_edge
+            end = start + points_per_edge
+            x[start:end] = x_edge
+            y[start:end] = y_edge
 
         return x, y
-        
 
-class GenerateShape():
+
+class TransformedShape:
+    def __init__(self, shape: BaseShape, translation: tuple = (0.0, 0.0), scale: float = 1.0, angle: float = 0.0):
+        self.shape = shape
+        self.translation = np.asarray(translation)
+        self.scale = scale
+        self.angle = angle
+        self.points = self.compute_points()
+
+    def compute_points(self):
+        x, y = self.shape.get_points()
+        points = np.stack((x, y), axis=-1)
+
+        if self.angle != 0.0:
+            c, s = np.cos(self.angle), np.sin(self.angle)
+            rotation = np.array([[c, -s], [s, c]])
+            points = points @ rotation.T
+
+        points = points * self.scale
+        points = points + self.translation
+        return points[:, 0], points[:, 1]
+
+    def get_points(self):
+        return self.points
+
+
+class GenerateShape:
     def __init__(self, shapes: dict, transform_cgf: DictConfig):
         self.shapes = shapes
+        self.shape_classes = {
+            'circle': Circle,
+            'hexagon': Hexagon,
+            'triangle': Triangle,
+        }
+        self.base_shape_cache = {}
         translation_range = transform_cgf.translation_range
         scale_range = transform_cgf.scale_range
         rotation_range = transform_cgf.rotation_range
         self.transformations = {
             'translation': lambda: (random.uniform(*translation_range), random.uniform(*translation_range)),
             'scale': lambda: random.uniform(*scale_range),
-            'rotation': lambda: random.uniform(*rotation_range)
+            'rotation': lambda: np.deg2rad(random.uniform(*rotation_range))
         }
+
+    def get_base_shape(self, shape_name: str, num_points: int):
+        key = (shape_name, num_points)
+        if key not in self.base_shape_cache:
+            if shape_name not in self.shape_classes:
+                raise ValueError(f"Unsupported shape: {shape_name}")
+            self.base_shape_cache[key] = self.shape_classes[shape_name](num_points=num_points)
+        return self.base_shape_cache[key]
        
     def generate_shapes(self):
         V=[]
@@ -116,32 +141,23 @@ class GenerateShape():
             scale = self.transformations['scale']()
             rotation = self.transformations['rotation']()
 
-            if shape_name == 'circle':
-                shape = Circle(translation, scale, num_points)
-            elif shape_name == 'hexagon':
-                shape = Hexagon(rotation, translation, scale, num_points)
-            elif shape_name == 'triangle':
-                shape = Triangle(rotation, translation, scale, num_points)
-            else:
-                raise ValueError(f"Unsupported shape: {shape_name}")
+            base_shape = self.get_base_shape(shape_name, num_points)
+            angle = 0.0 if shape_name == 'circle' else rotation
+            shape = TransformedShape(base_shape, translation=translation, scale=scale, angle=angle)
 
             x, y = shape.get_points()
             coords = np.stack((x, y), axis=-1)
-            V.append(coords) # vertices of shapes
-            L.append(self.connectivity(V)) # connectivity of the shapes
+            V.append(coords)  # vertices of current shape
+            L.append(self.connectivity(coords))  # connectivity of current shape
         return V, L
 
-    
-    def connectivity(self, V):
-        L = []
-        l_list = []
-        for v in V:
-            for i in range(len(v)):
-                l_list.append((i, (i + 1) % len(v)))  # connect each vertex to the next and the last to the first
-            L.append(l_list)
-        return L
+    def connectivity(self, vertices):
+        edges = []
+        for i in range(len(vertices)):
+            edges.append((i, (i + 1) % len(vertices)))  # close the polygon
+        return edges
            
-@hydra.main(version_base=None, config_path="/home/sofiasannino/projects/rl-mesh-deformation/configs", config_name="generate")
+@hydra.main(version_base=None, config_path="../configs", config_name="generate")
 def main(cfg: DictConfig):
     print("Generating shapes with the following configuration:")
     print(cfg)
@@ -153,17 +169,19 @@ def main(cfg: DictConfig):
     shape_generator = GenerateShape(shapes, cfg)
     V, L = shape_generator.generate_shapes()
     print("Shapes generated successfully!")
-    i = 0 
-    for v, l in zip(V, L):
-        plt.figure()
-        plt.scatter(v[:, 0], v[:, 1])
+    fig, ax = plt.subplots()
+    colors = ['tab:blue', 'tab:orange', 'tab:green']
+    for i, (shape_name, v, l) in enumerate(zip(shapes.keys(), V, L)):
+        color = colors[i % len(colors)]
+        ax.scatter(v[:, 0], v[:, 1], color=color, label=shape_name)
         for edge in l:
-            plt.plot(v[edge, 0], v[edge, 1], 'k-')
-        plt.title('Generated Shape')
-        plt.axis('equal')
-        plt.show()
-        plt.savefig(f"generated_shape_{i}.png")
-        i += 1
+            ax.plot(v[edge, 0], v[edge, 1], color=color, linewidth=1.2)
+
+    ax.axis('equal')
+    output_file = "data_generation/generated_shapes.png"
+    fig.savefig(output_file, dpi=200, bbox_inches='tight', facecolor='white')
+    print(f"Saved {output_file}")
+    plt.show()
 
 
 if __name__ == "__main__":    main()
