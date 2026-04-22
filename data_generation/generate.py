@@ -113,6 +113,12 @@ class GenerateShape:
             'circle': Circle,
             'hexagon': Hexagon,
             'triangle': Triangle,
+            #'polygon': Polygon,
+            #'star': Star,
+            #'ellipse': Ellipse,
+            #'heart': Heart,
+            #'cross': Cross,
+            #'imageshape': ImageShape #something generic, maybe with a path to an image file that can be loaded and converted to points
         }
         self.base_shape_cache = {}
         translation_range = transform_cgf.translation_range
