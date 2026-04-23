@@ -34,6 +34,8 @@ omegaconf = "*"
 
 [pypi-dependencies]
 
+rlmd = { path = ".", editable = true }
+
 einops = "*"
 vtk = "*"
 manifold3d = "*"
