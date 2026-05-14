@@ -1,4 +1,3 @@
-import random 
 from abc import ABC, abstractmethod
 import numpy as np
 import matplotlib.pyplot as plt
@@ -137,9 +136,214 @@ class Star(BaseShape):
         return np.stack((x, y), axis=-1)
 
 
+class TransformedShapeBatch:
+    """
+    Represents many transformed versions of one base shape.
+
+    The affine transform is:
+
+        new_points = base_points @ linear_matrix.T + translation
+
+    where:
+        base_points:     [P, 2]
+        linear_matrix:   [B, 2, 2]
+        translation:     [B, 2]
+        new_points:      [B, P, 2]
+    """
+
+    def __init__(
+        self,
+        name,
+        base_shape: BaseShape,
+        translation,
+        linear_matrix,
+        device="cpu",
+        dtype=torch.float32,
+    ):
+        self.name = name
+        self.base_shape = base_shape
+        self.device = torch.device(device)
+        self.dtype = dtype
+
+        self.translation = torch.as_tensor(
+            translation,
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+        self.linear_matrix = torch.as_tensor(
+            linear_matrix,
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+        self.base_points = torch.as_tensor(
+            self.base_shape.get_points(),
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+        self.edges = torch.as_tensor(
+            self.base_shape.get_edges(),
+            device=self.device,
+            dtype=torch.long,
+        )
+
+        if self.translation.ndim != 2 or self.translation.shape[1] != 2:
+            raise ValueError("translation must have shape [B, 2]")
+
+        if self.linear_matrix.ndim != 3 or self.linear_matrix.shape[1:] != (2, 2):
+            raise ValueError("linear_matrix must have shape [B, 2, 2]")
+
+        if self.translation.shape[0] != self.linear_matrix.shape[0]:
+            raise ValueError("translation and linear_matrix must have the same batch size")
+
+    def __len__(self):
+        return self.translation.shape[0]
+
+    @property
+    def num_points(self):
+        return self.base_points.shape[0]
+
+    def points(self, max_samples=None):
+        if max_samples is None:
+            translation = self.translation
+            linear_matrix = self.linear_matrix
+        else:
+            translation = self.translation[:max_samples]
+            linear_matrix = self.linear_matrix[:max_samples]
+
+        points = torch.matmul(
+            self.base_points.unsqueeze(0),
+            linear_matrix.transpose(1, 2),
+        )
+
+        points = points + translation.unsqueeze(1)
+
+        return points
+
+    def to_arrays(self, max_samples=None):
+        return (
+            self.points(max_samples=max_samples).detach().cpu().numpy(),
+            self.edges.detach().cpu().numpy(),
+        )
+
+    def to_payload(self, save_points=False):
+        payload = {
+            "translation": self.translation.detach().cpu(),
+            "linear_matrix": self.linear_matrix.detach().cpu(),
+        }
+
+        if save_points:
+            payload["points"] = self.points().detach().cpu()
+            payload["edges"] = self.edges.detach().cpu()
+
+        return payload
+    
+    def get_shape_array(self, index=0):
+        points = self.points(max_samples=index + 1)[index].detach().cpu().numpy()
+        edges = self.edges.detach().cpu().numpy()
+        return points, edges
+
+    def get_base_shape_array(self):
+        return (
+            self.base_points.detach().cpu().numpy(),
+            self.edges.detach().cpu().numpy(),
+        )
 
 
+class ShapeMixtureBatch:
+    """
+    Holds several TransformedShapeBatch objects.
+    Usually one batch per shape type.
+    """
 
+    def __init__(self):
+        self.batches = {}
+
+    def add(self, name, batch: TransformedShapeBatch):
+        self.batches[name] = batch
+
+    def __getitem__(self, name):
+        return self.batches[name]
+
+    def __len__(self):
+        return sum(len(batch) for batch in self.batches.values())
+
+    def keys(self):
+        return self.batches.keys()
+
+    def items(self):
+        return self.batches.items()
+
+    def plot(
+        self,
+        max_per_shape=10,
+        colors=None,
+        figsize=(8, 8),
+        point_size=2,
+        point_alpha=0.2,
+        line_alpha=0.45,
+        linewidth=0.7,
+        title="Shape mixture batch",
+        output_file=None,
+        show=True,
+    ):
+        if colors is None:
+            colors = {
+                "circle": "tab:blue",
+                "hexagon": "tab:orange",
+                "triangle": "tab:green",
+                "star_5": "tab:red",
+                "star_12": "tab:purple",
+            }
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        for shape_name, batch in self.batches.items():
+            color = colors.get(shape_name, None)
+
+            n = len(batch) if max_per_shape is None else min(max_per_shape, len(batch))
+            points, edges = batch.to_arrays(max_samples=n)
+
+            first_label = True
+
+            for i in range(n):
+                p = points[i]
+                label = shape_name if first_label else None
+
+                for edge in edges:
+                    ax.plot(
+                        p[edge, 0],
+                        p[edge, 1],
+                        color=color,
+                        alpha=line_alpha,
+                        linewidth=linewidth,
+                        label=label,
+                    )
+                    label = None
+
+                ax.scatter(
+                    p[:, 0],
+                    p[:, 1],
+                    color=color,
+                    s=point_size,
+                    alpha=point_alpha,
+                )
+
+                first_label = False
+
+        ax.axis("equal")
+        ax.legend()
+        ax.set_title(title)
+
+        if output_file is not None:
+            fig.savefig(output_file, dpi=200, bbox_inches="tight", facecolor="white")
+
+        if show:
+            plt.show()
+
+        return fig, ax
 
 
 # the reason of this class is to cache base shapes and not recompute them each time
@@ -173,85 +377,6 @@ class ShapeGenerator:
             )
 
         return self.base_shape_cache[key]
-
-    # Builds one transformed shape using the NumPy path.
-    # This is mainly for visualization/debugging, not for large dataset generation.
-    def build_shape(
-        self,
-        shape_name,
-        num_points=100,
-        center=(0.0, 0.0),
-        linear_matrix=None,
-        scale=1.0,
-        angle=0.0,
-        **shape_kwargs,
-    ):
-        base_shape = self.get_base_shape(shape_name, num_points, **shape_kwargs)
-
-        return TransformedShape(
-            base_shape,
-            translation=center,
-            linear_matrix=linear_matrix,
-            scale=scale,
-            angle=angle,
-        )
-
-    # Samples one random translation and one random 2x2 linear transform.
-    # This is for visualization and not for large dataset generation.
-    def build_random_shape(self, instance_name, shape_spec, transform_cfg):
-        shape_name = shape_spec.get("shape", instance_name)
-        num_points = shape_spec.get("num_points", 100)
-
-        shape_kwargs = {
-            k: v for k, v in shape_spec.items()
-            if k not in ("shape", "num_points", "percentage", "transform", "name")
-        }
-
-        center = (
-            random.uniform(*transform_cfg.translation_range),
-            random.uniform(*transform_cfg.translation_range),
-        )
-
-        scale_x = random.uniform(*transform_cfg.scale_range)
-        scale_y = random.uniform(*transform_cfg.scale_range)
-
-        angle = np.deg2rad(random.uniform(*transform_cfg.rotation_range))
-
-        c, s = np.cos(angle), np.sin(angle)
-
-        # A = R @ diag(scale_x, scale_y)
-        linear_matrix = np.array(
-            [
-                [c * scale_x, -s * scale_y],
-                [s * scale_x,  c * scale_y],
-            ],
-            dtype=float,
-        )
-
-        return self.build_shape(
-            shape_name=shape_name,
-            num_points=num_points,
-            center=center,
-            linear_matrix=linear_matrix,
-            **shape_kwargs,
-        )
-
-    def generate_shapes(self, shapes, transform_cfg):
-        V = []
-        L = []
-
-        for instance_name, shape_spec in shapes.items():
-            shape = self.build_random_shape(instance_name, shape_spec, transform_cfg)
-            vertices, edges = shape.to_arrays()
-
-            V.append(vertices)
-            L.append(edges)
-
-        return V, L
-
-    # ----------------------------
-    # Torch for large generation
-    # ----------------------------
 
     # Converts a cached NumPy BaseShape into Torch tensors.
     def get_base_tensors(
@@ -311,13 +436,23 @@ class ShapeGenerator:
     # Reads a range from either a normal dict or a Hydra DictConfig.
     @staticmethod
     def _get_range(transform_cfg, name):
-
         if isinstance(transform_cfg, dict):
             value = transform_cfg[name]
         else:
             value = getattr(transform_cfg, name)
 
         return float(value[0]), float(value[1])
+
+    # Reads optional values from either a normal dict or a Hydra DictConfig.
+    @staticmethod
+    def _cfg_get(cfg, name, default):
+        if isinstance(cfg, dict):
+            return cfg.get(name, default)
+
+        if hasattr(cfg, "get"):
+            return cfg.get(name, default)
+
+        return getattr(cfg, name, default)
 
     # Samples a whole batch of translations and 2x2 linear transformation matrices.
     def sample_transforms_torch(
@@ -391,7 +526,6 @@ class ShapeGenerator:
         return translation, linear_matrix
 
     # Applies one 2x2 linear transform and one translation to each copy of the base shape.
-    # This is the main vectorized Torch operation.
     @staticmethod
     def transform_points_torch(base_points, translation, linear_matrix):
         """
@@ -412,8 +546,7 @@ class ShapeGenerator:
 
         return points
 
-    # Generates one Torch batch for a single shape type.
-    # If return_points=False, it saves memory by only returning transform parameters.
+    # Generates one transformed batch for a single shape type.
     def generate_batch_torch(
         self,
         instance_name,
@@ -423,13 +556,15 @@ class ShapeGenerator:
         seed=0,
         device="cpu",
         dtype=torch.float32,
-        return_points=True,
     ):
         """
         Generates many transformed copies of one base shape in parallel.
         """
 
         device = torch.device(device)
+
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested, but CUDA is not available.")
 
         shape_name = shape_spec.get("shape", instance_name)
         num_points = shape_spec.get("num_points", 100)
@@ -439,11 +574,9 @@ class ShapeGenerator:
             if k not in ("shape", "num_points", "percentage", "transform", "name")
         }
 
-        base_points, edges = self.get_base_tensors(
+        base_shape = self.get_base_shape(
             shape_name=shape_name,
             num_points=num_points,
-            device=device,
-            dtype=dtype,
             **shape_kwargs,
         )
 
@@ -458,23 +591,55 @@ class ShapeGenerator:
             dtype=dtype,
         )
 
-        output = {
-            "translation": translation,
-            "linear_matrix": linear_matrix,
-            "edges": edges,
-        }
+        return TransformedShapeBatch(
+            name=instance_name,
+            base_shape=base_shape,
+            translation=translation,
+            linear_matrix=linear_matrix,
+            device=device,
+            dtype=dtype,
+        )
 
-        if return_points:
-            output["points"] = self.transform_points_torch(
-                base_points=base_points,
-                translation=translation,
-                linear_matrix=linear_matrix,
+    # Generates a mixture batch containing multiple shape types.
+    def generate_mixture_batch_torch(
+        self,
+        shapes,
+        transform_cfg,
+        N=None,
+        samples_per_shape=None,
+        seed=0,
+        device="cpu",
+        dtype=torch.float32,
+    ):
+        if samples_per_shape is None and N is None:
+            raise ValueError("Either N or samples_per_shape must be provided.")
+
+        if samples_per_shape is not None:
+            counts = {name: int(samples_per_shape) for name in shapes.keys()}
+        else:
+            counts = self.counts_from_percentages(shapes, N)
+
+        mixture = ShapeMixtureBatch()
+
+        for spec_idx, (instance_name, shape_spec) in enumerate(shapes.items()):
+            count = counts[instance_name]
+            batch_seed = seed + spec_idx * 1_000_003
+
+            batch = self.generate_batch_torch(
+                instance_name=instance_name,
+                shape_spec=shape_spec,
+                transform_cfg=transform_cfg,
+                batch_size=count,
+                seed=batch_seed,
+                device=device,
+                dtype=dtype,
             )
 
-        return output
+            mixture.add(instance_name, batch)
+
+        return mixture
 
     # Computes how many samples each shape should get from its percentage.
-    # Example: percentage 0.30 with N=100000 gives about 30000 samples.
     @staticmethod
     def counts_from_percentages(shapes, N):
         names = list(shapes.keys())
@@ -533,7 +698,9 @@ class ShapeGenerator:
         if save_mode not in ("params", "full"):
             raise ValueError("save_mode must be either 'params' or 'full'")
 
-        if device == "cuda" and not torch.cuda.is_available():
+        device = torch.device(device)
+
+        if device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested, but CUDA is not available.")
 
         if overwrite and os.path.exists(out_dir):
@@ -617,22 +784,15 @@ class ShapeGenerator:
                     seed=shard_seed,
                     device=device,
                     dtype=dtype,
-                    return_points=(save_mode == "full"),
                 )
 
-                payload = {
-                    "translation": batch["translation"].cpu(),
-                    "linear_matrix": batch["linear_matrix"].cpu(),
-                    "spec_idx": torch.full(
-                        (current_batch,),
-                        spec_idx,
-                        dtype=torch.long,
-                    ),
-                }
+                payload = batch.to_payload(save_points=(save_mode == "full"))
 
-                if save_mode == "full":
-                    payload["points"] = batch["points"].cpu()
-                    payload["edges"] = batch["edges"].cpu()
+                payload["spec_idx"] = torch.full(
+                    (current_batch,),
+                    spec_idx,
+                    dtype=torch.long,
+                )
 
                 shard_path = os.path.join(spec_dir, f"shard_{shard_idx:06d}.pt")
 
@@ -655,50 +815,6 @@ class ShapeGenerator:
         return manifest
 
 
-class TransformedShape:
-    def __init__(
-        self,
-        baseshape: BaseShape,
-        translation: tuple = (0.0, 0.0),
-        linear_matrix=None,
-        scale: float = 1.0,
-        angle: float = 0.0,
-    ):
-        self.baseshape = baseshape
-        self.translation = np.asarray(translation, dtype=float)
-        self.linear_matrix = None if linear_matrix is None else np.asarray(linear_matrix, dtype=float)
-        self.scale = scale
-        self.angle = angle
-        self.points = self.compute_points()
-
-    def compute_points(self):
-        points = np.asarray(self.baseshape.get_points(), dtype=float)
-
-        if self.linear_matrix is not None:
-            points = points @ self.linear_matrix.T
-        else:
-            if self.angle != 0.0:
-                c, s = np.cos(self.angle), np.sin(self.angle)
-                rotation = np.array([[c, -s], [s, c]])
-                points = points @ rotation.T
-
-            points = points * self.scale
-
-        points = points + self.translation
-
-        return points
-
-    def get_points(self):
-        return self.points
-
-    def get_edges(self):
-        return self.baseshape.get_edges()
-
-    def to_arrays(self):
-        return self.points, self.get_edges()
-
-
-           
 @hydra.main(version_base=None, config_path="../configs", config_name="generate")
 def main(cfg: DictConfig):
     print("Generating shapes with the following configuration:")
@@ -714,37 +830,52 @@ def main(cfg: DictConfig):
 
     shape_generator = ShapeGenerator()
 
-    V, L = shape_generator.generate_shapes(shapes, cfg)
+    device = ShapeGenerator._cfg_get(cfg, "device", "auto")
 
-    print("Shapes generated successfully!")
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    fig, ax = plt.subplots()
-    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple','tab:cyan']
+    seed = int(ShapeGenerator._cfg_get(cfg, "seed", 123))
+    preview_samples_per_shape = int(ShapeGenerator._cfg_get(cfg, "preview_samples_per_shape", 20))
+    preview_output_file = ShapeGenerator._cfg_get(cfg, "preview_output_file", "data_generation/generated_shapes.png")
 
-    for i, (shape_name, v, l) in enumerate(zip(shapes.keys(), V, L)):
-        color = colors[i % len(colors)]
-        ax.scatter(v[:, 0], v[:, 1], color=color, label=shape_name)
+    dataset_N = int(ShapeGenerator._cfg_get(cfg, "N", 100_000))
+    batch_size = int(ShapeGenerator._cfg_get(cfg, "batch_size", 4096))
+    out_dir = ShapeGenerator._cfg_get(cfg, "out_dir", "data_generation/generated_dataset")
+    save_mode = ShapeGenerator._cfg_get(cfg, "save_mode", "params")
+    overwrite = bool(ShapeGenerator._cfg_get(cfg, "overwrite", True))
 
-        for edge in l:
-            ax.plot(v[edge, 0], v[edge, 1], color=color, linewidth=1.2)
+    preview_batch = shape_generator.generate_mixture_batch_torch(
+        shapes=shapes,
+        transform_cfg=cfg,
+        samples_per_shape=preview_samples_per_shape,
+        seed=seed,
+        device=device,
+        dtype=torch.float32,
+    )
 
-    ax.axis('equal')
+    preview_batch.plot(
+        max_per_shape=preview_samples_per_shape,
+        title=f"{preview_samples_per_shape} augmentations per shape",
+        output_file=preview_output_file,
+        show=False,
+    )
 
-    output_file = "data_generation/generated_shapes.png"
-    fig.savefig(output_file, dpi=200, bbox_inches='tight', facecolor='white')
-    print(f"Saved {output_file}")
-    #plt.show()
+    plt.close()
+
+    print(f"Saved {preview_output_file}")
 
     manifest = shape_generator.generate_to_disk_torch(
         shapes=shapes,
         transform_cfg=cfg,
-        out_dir="data_generation/generated_dataset",
-        N=100_000,
-        batch_size=4096,
-        seed=123,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        save_mode="params",
-        overwrite=True,
+        out_dir=out_dir,
+        N=dataset_N,
+        batch_size=batch_size,
+        seed=seed,
+        device=device,
+        dtype=torch.float32,
+        save_mode=save_mode,
+        overwrite=overwrite,
     )
 
     print("Dataset generated successfully!")

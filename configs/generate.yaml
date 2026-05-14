@@ -1,3 +1,14 @@
-translation_range: [-1.0, 1.0] # the range for random translation in both x and y directions
-scale_range: [0.2, 2.0] # the range for random scaling factors (e.g., 0.5 means half the size, 2.0 means double the size)
-rotation_range: [0.0, 360.0] # the range for random rotation angles in degrees (e.g., 0 to 360 for full rotation)
+translation_range: [-1.0, 1.0]
+scale_range: [0.2, 2.0]
+rotation_range: [0.0, 360.0]
+
+seed: 123
+device: auto
+preview_samples_per_shape: 20
+preview_output_file: data_generation/generated_shapes.png
+
+N: 100000
+batch_size: 4096
+out_dir: data_generation/generated_dataset
+save_mode: params
+overwrite: true
