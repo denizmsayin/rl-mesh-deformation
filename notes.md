@@ -1,0 +1,2 @@
+- long format for csv (every line you write all info, even if repeated many times)
+-

@@ -5,6 +5,11 @@ import matplotlib.pyplot as plt
 from omegaconf import DictConfig
 import hydra  
 
+import os
+import json
+import math
+import shutil
+import torch
 
 
 
@@ -129,49 +134,94 @@ class Star(BaseShape):
 
         return np.stack((x, y), axis=-1)
 
-#the reason of this class is to cache base shapes and not recompute them each time
+
+
+
+
+
+
+# the reason of this class is to cache base shapes and not recompute them each time
+# also makes large augmentation generation fast in torch.
 class ShapeGenerator:
     def __init__(self):
         self.shape_classes = {
-            'circle': Circle,
-            'hexagon': Hexagon,
-            'triangle': Triangle,
-            'star': Star,
+            "circle": Circle,
+            "hexagon": Hexagon,
+            "triangle": Triangle,
+            "star": Star,
         }
+
+        # NumPy BaseShape cache
         self.base_shape_cache = {}
 
+        # Torch tensor cache
+        self.base_tensor_cache = {}
+
+     # Returns a cached BaseShape object, or creates it if it does not exist yet.
     def get_base_shape(self, shape_name, num_points=100, **shape_kwargs):
         key = (shape_name, num_points, tuple(sorted(shape_kwargs.items())))
+
         if key not in self.base_shape_cache:
             if shape_name not in self.shape_classes:
                 raise ValueError(f"Unsupported shape: {shape_name}")
+
             self.base_shape_cache[key] = self.shape_classes[shape_name](
-                num_points=num_points, **shape_kwargs
+                num_points=num_points,
+                **shape_kwargs,
             )
+
         return self.base_shape_cache[key]
 
-    def build_shape(self, shape_name, num_points=100, center=(0.0, 0.0), scale=1.0, angle=0.0, **shape_kwargs):
+    # Builds one transformed shape using the NumPy path.
+    # This is mainly for visualization/debugging, not for large dataset generation.
+    def build_shape(
+        self,
+        shape_name,
+        num_points=100,
+        center=(0.0, 0.0),
+        scale=1.0,
+        angle=0.0,
+        **shape_kwargs,
+    ):
         base_shape = self.get_base_shape(shape_name, num_points, **shape_kwargs)
-        return TransformedShape(base_shape,translation=center,scale=scale,angle=angle,)
 
+        return TransformedShape(
+            base_shape,
+            translation=center,
+            scale=scale,
+            angle=angle,
+        )
+
+    # Samples one random translation, scale, and rotation, then builds one TransformedShape.
+    # This is also for visualization and not for large dataset generation.
     def build_random_shape(self, instance_name, shape_spec, transform_cfg):
-        shape_name = shape_spec.get('shape', instance_name)
-        num_points = shape_spec.get('num_points', 100)
+        shape_name = shape_spec.get("shape", instance_name)
+        num_points = shape_spec.get("num_points", 100)
+
         shape_kwargs = {
             k: v for k, v in shape_spec.items()
-            if k not in ('shape', 'num_points')
+            if k not in ("shape", "num_points", "percentage", "transform", "name")
         }
 
         center = (
             random.uniform(*transform_cfg.translation_range),
             random.uniform(*transform_cfg.translation_range),
         )
+
         scale = random.uniform(*transform_cfg.scale_range)
-        angle = 0.0 if shape_name == 'circle' else np.deg2rad(
+
+        angle = 0.0 if shape_name == "circle" else np.deg2rad(
             random.uniform(*transform_cfg.rotation_range)
         )
 
-        return self.build_shape(shape_name=shape_name,num_points=num_points,center=center,scale=scale,angle=angle,**shape_kwargs)
+        return self.build_shape(
+            shape_name=shape_name,
+            num_points=num_points,
+            center=center,
+            scale=scale,
+            angle=angle,
+            **shape_kwargs,
+        )
 
     def generate_shapes(self, shapes, transform_cfg):
         V = []
@@ -180,10 +230,402 @@ class ShapeGenerator:
         for instance_name, shape_spec in shapes.items():
             shape = self.build_random_shape(instance_name, shape_spec, transform_cfg)
             vertices, edges = shape.to_arrays()
+
             V.append(vertices)
             L.append(edges)
 
         return V, L
+
+    # ----------------------------
+    # Torch for large generation
+    # ----------------------------
+
+    # Converts a cached NumPy BaseShape into Torch tensors.
+    def get_base_tensors(
+        self,
+        shape_name,
+        num_points=100,
+        device="cpu",
+        dtype=torch.float32,
+        **shape_kwargs,
+    ):
+
+        device = torch.device(device)
+
+        key = (
+            shape_name,
+            num_points,
+            tuple(sorted(shape_kwargs.items())),
+            str(device),
+            str(dtype),
+        )
+
+        if key not in self.base_tensor_cache:
+            base_shape = self.get_base_shape(
+                shape_name,
+                num_points=num_points,
+                **shape_kwargs,
+            )
+
+            points_np, edges_np = base_shape.to_arrays()
+
+            points = torch.as_tensor(points_np, device=device, dtype=dtype)
+            edges = torch.as_tensor(edges_np, device=device, dtype=torch.long)
+
+            self.base_tensor_cache[key] = (points, edges)
+
+        return self.base_tensor_cache[key]
+
+    # Creates a seeded Torch random generator.
+    # This makes the Torch dataset generation reproducible.
+    @staticmethod
+    def _make_generator(seed, device):
+        device = torch.device(device)
+        g = torch.Generator(device=device)
+        g.manual_seed(int(seed))
+        return g
+    
+    # Samples uniform random values in [low, high] with Torch.
+    @staticmethod
+    def _uniform(low, high, size, generator, device, dtype):
+        return low + (high - low) * torch.rand(
+            size,
+            generator=generator,
+            device=device,
+            dtype=dtype,
+        )
+    
+    # Reads a range from either a normal dict or a Hydra DictConfig.
+    @staticmethod
+    def _get_range(transform_cfg, name):
+
+        if isinstance(transform_cfg, dict):
+            value = transform_cfg[name]
+        else:
+            value = getattr(transform_cfg, name)
+
+        return float(value[0]), float(value[1])
+
+    # Samples a whole batch of translation, scale, and angle values.
+    def sample_transforms_torch(
+        self,
+        shape_name,
+        batch_size,
+        transform_cfg,
+        generator,
+        device,
+        dtype,
+    ):
+        t_lo, t_hi = self._get_range(transform_cfg, "translation_range")
+        s_lo, s_hi = self._get_range(transform_cfg, "scale_range")
+        r_lo, r_hi = self._get_range(transform_cfg, "rotation_range")
+
+        translation = self._uniform(
+            t_lo,
+            t_hi,
+            (batch_size, 2),
+            generator,
+            device,
+            dtype,
+        )
+
+        scale = self._uniform(
+            s_lo,
+            s_hi,
+            (batch_size,),
+            generator,
+            device,
+            dtype,
+        )
+
+        if shape_name == "circle":
+            angle = torch.zeros(batch_size, device=device, dtype=dtype)
+        else:
+            angle_deg = self._uniform(
+                r_lo,
+                r_hi,
+                (batch_size,),
+                generator,
+                device,
+                dtype,
+            )
+            angle = angle_deg * math.pi / 180.0
+
+        return translation, scale, angle
+
+    # Applies translation, scale, and rotation to many copies of the same base shape at once.
+    # This is the main vectorized Torch operation.
+    @staticmethod
+    def transform_points_torch(base_points, translation, scale, angle):
+        """
+        base_points: [P, 2]
+        translation: [B, 2]
+        scale: [B]
+        angle: [B]
+
+        returns:
+            points: [B, P, 2]
+        """
+
+        x = base_points[:, 0].unsqueeze(0)
+        y = base_points[:, 1].unsqueeze(0)
+
+        c = torch.cos(angle).unsqueeze(1)
+        s = torch.sin(angle).unsqueeze(1)
+        sc = scale.unsqueeze(1)
+
+        tx = translation[:, 0].unsqueeze(1)
+        ty = translation[:, 1].unsqueeze(1)
+
+        x_new = sc * (x * c - y * s) + tx
+        y_new = sc * (x * s + y * c) + ty
+
+        return torch.stack([x_new, y_new], dim=-1)
+
+    # Generates one Torch batch for a single shape type.
+    # If return_points=False, it saves memory by only returning transform parameters.
+    def generate_batch_torch(
+        self,
+        instance_name,
+        shape_spec,
+        transform_cfg,
+        batch_size,
+        seed=0,
+        device="cpu",
+        dtype=torch.float32,
+        return_points=True,
+    ):
+        """
+        Generates many transformed copies of one base shape in parallel.
+        """
+
+        device = torch.device(device)
+
+        shape_name = shape_spec.get("shape", instance_name)
+        num_points = shape_spec.get("num_points", 100)
+
+        shape_kwargs = {
+            k: v for k, v in shape_spec.items()
+            if k not in ("shape", "num_points", "percentage", "transform", "name")
+        }
+
+        base_points, edges = self.get_base_tensors(
+            shape_name=shape_name,
+            num_points=num_points,
+            device=device,
+            dtype=dtype,
+            **shape_kwargs,
+        )
+
+        generator = self._make_generator(seed, device)
+
+        translation, scale, angle = self.sample_transforms_torch(
+            shape_name=shape_name,
+            batch_size=batch_size,
+            transform_cfg=transform_cfg,
+            generator=generator,
+            device=device,
+            dtype=dtype,
+        )
+
+        output = {
+            "translation": translation,
+            "scale": scale,
+            "angle": angle,
+            "edges": edges,
+        }
+
+        if return_points:
+            output["points"] = self.transform_points_torch(
+                base_points=base_points,
+                translation=translation,
+                scale=scale,
+                angle=angle,
+            )
+
+        return output
+
+    # Computes how many samples each shape should get from its percentage.
+    # Example: percentage 0.30 with N=100000 gives about 30000 samples.
+    @staticmethod
+    def counts_from_percentages(shapes, N):
+        names = list(shapes.keys())
+
+        percentages = []
+        for name in names:
+            percentages.append(float(shapes[name].get("percentage", 1.0 / len(names))))
+
+        total = sum(percentages)
+
+        if abs(total - 1.0) > 1e-8:
+            percentages = [p / total for p in percentages]
+
+        raw = [p * N for p in percentages]
+        counts = [int(math.floor(x)) for x in raw]
+
+        remainder = N - sum(counts)
+
+        fractional_parts = sorted(
+            enumerate([x - c for x, c in zip(raw, counts)]),
+            key=lambda x: (-x[1], x[0]),
+        )
+
+        for i in range(remainder):
+            counts[fractional_parts[i][0]] += 1
+
+        return dict(zip(names, counts))
+
+    # Generates the full dataset in shards and saves it to disk.
+    # This avoids keeping the whole dataset in RAM.
+    def generate_to_disk_torch(
+        self,
+        shapes,
+        transform_cfg,
+        out_dir,
+        N,
+        batch_size=8192,
+        seed=0,
+        device="cpu",
+        dtype=torch.float32,
+        save_mode="params",
+        overwrite=False,
+    ):
+        """
+        Efficient dataset generation.
+
+        save_mode="params":
+            saves only translation, scale, angle.
+            Best for huge datasets.
+
+        save_mode="full":
+            also saves transformed points.
+            Much larger on disk.
+        """
+
+        if save_mode not in ("params", "full"):
+            raise ValueError("save_mode must be either 'params' or 'full'")
+
+        if device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested, but CUDA is not available.")
+
+        if overwrite and os.path.exists(out_dir):
+            shutil.rmtree(out_dir)
+
+        os.makedirs(out_dir, exist_ok=True)
+
+        counts = self.counts_from_percentages(shapes, N)
+
+        manifest = {
+            "N": int(N),
+            "seed": int(seed),
+            "batch_size": int(batch_size),
+            "device": str(device),
+            "dtype": str(dtype),
+            "save_mode": save_mode,
+            "specs": [],
+            "shards": [],
+        }
+
+        for spec_idx, (instance_name, shape_spec) in enumerate(shapes.items()):
+            count = counts[instance_name]
+
+            shape_name = shape_spec.get("shape", instance_name)
+            num_points = shape_spec.get("num_points", 100)
+            save_name = shape_spec.get("name", instance_name)
+
+            shape_kwargs = {
+                k: v for k, v in shape_spec.items()
+                if k not in ("shape", "num_points", "percentage", "transform", "name")
+            }
+
+            spec_dir = os.path.join(out_dir, f"{spec_idx:02d}_{save_name}")
+            os.makedirs(spec_dir, exist_ok=True)
+
+            base_points, edges = self.get_base_tensors(
+                shape_name=shape_name,
+                num_points=num_points,
+                device=device,
+                dtype=dtype,
+                **shape_kwargs,
+            )
+
+            base_path = os.path.join(spec_dir, "base_shape.pt")
+
+            torch.save(
+                {
+                    "base_points": base_points.cpu(),
+                    "edges": edges.cpu(),
+                    "shape": shape_name,
+                    "num_points": int(base_points.shape[0]),
+                    "params": shape_kwargs,
+                    "name": save_name,
+                },
+                base_path,
+            )
+
+            manifest["specs"].append(
+                {
+                    "spec_idx": int(spec_idx),
+                    "instance_name": instance_name,
+                    "shape": shape_name,
+                    "num_samples": int(count),
+                    "num_points": int(base_points.shape[0]),
+                    "params": shape_kwargs,
+                    "base_shape_file": os.path.relpath(base_path, out_dir),
+                }
+            )
+
+            num_shards = math.ceil(count / batch_size)
+
+            for shard_idx in range(num_shards):
+                current_batch = min(batch_size, count - shard_idx * batch_size)
+                shard_seed = seed + spec_idx * 1_000_003 + shard_idx
+
+                batch = self.generate_batch_torch(
+                    instance_name=instance_name,
+                    shape_spec=shape_spec,
+                    transform_cfg=transform_cfg,
+                    batch_size=current_batch,
+                    seed=shard_seed,
+                    device=device,
+                    dtype=dtype,
+                    return_points=(save_mode == "full"),
+                )
+
+                payload = {
+                    "translation": batch["translation"].cpu(),
+                    "scale": batch["scale"].cpu(),
+                    "angle": batch["angle"].cpu(),
+                    "spec_idx": torch.full(
+                        (current_batch,),
+                        spec_idx,
+                        dtype=torch.long,
+                    ),
+                }
+
+                if save_mode == "full":
+                    payload["points"] = batch["points"].cpu()
+                    payload["edges"] = batch["edges"].cpu()
+
+                shard_path = os.path.join(spec_dir, f"shard_{shard_idx:06d}.pt")
+
+                torch.save(payload, shard_path)
+
+                manifest["shards"].append(
+                    {
+                        "path": os.path.relpath(shard_path, out_dir),
+                        "spec_idx": int(spec_idx),
+                        "num_samples": int(current_batch),
+                        "seed": int(shard_seed),
+                    }
+                )
+
+        manifest_path = os.path.join(out_dir, "manifest.json")
+
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+
+        return manifest
 
 
 class TransformedShape:
@@ -222,12 +664,12 @@ class TransformedShape:
 def main(cfg: DictConfig):
     print("Generating shapes with the following configuration:")
     print(cfg)
-    shapes ={
-        'circle': {'shape': 'circle', 'num_points': 60},
-        'hexagon': {'shape': 'hexagon', 'num_points': 60},
-        'triangle': {'shape': 'triangle', 'num_points': 60},
-        'star_5': {'shape': 'star', 'num_points': 60, 'n_tips': 5, 'inner_radius': 0.45},
-        'star_12': {'shape': 'star', 'num_points': 2500, 'n_tips': 12, 'inner_radius': 0.6},
+    shapes = {
+        "circle": {"shape": "circle", "num_points": 60, "percentage": 0.30},
+        "hexagon": {"shape": "hexagon", "num_points": 60, "percentage": 0.25},
+        "triangle": {"shape": "triangle", "num_points": 60, "percentage": 0.20},
+        "star_5": {"shape": "star", "num_points": 60, "n_tips": 5, "inner_radius": 0.45, "percentage": 0.15},
+        "star_12": {"shape": "star", "num_points": 2500, "n_tips": 12, "inner_radius": 0.6, "percentage": 0.10},
     }
     shape_generator = ShapeGenerator()
     V, L = shape_generator.generate_shapes(shapes, cfg)
@@ -245,6 +687,21 @@ def main(cfg: DictConfig):
     fig.savefig(output_file, dpi=200, bbox_inches='tight', facecolor='white')
     print(f"Saved {output_file}")
     #plt.show()
+
+    manifest = shape_generator.generate_to_disk_torch(
+        shapes=shapes,
+        transform_cfg=cfg,
+        out_dir="data_generation/generated_dataset",
+        N=100_000,
+        batch_size=4096,
+        seed=123,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        save_mode="params",
+        overwrite=True,
+    )
+
+    print("Dataset generated successfully!")
+    print(f"Number of shards: {len(manifest['shards'])}")
 
 
 if __name__ == "__main__":    main()
