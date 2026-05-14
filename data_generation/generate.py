@@ -55,6 +55,7 @@ class Hexagon(BaseShape):
         total_points = 6 * points_per_edge
         x = np.empty(total_points, dtype=float)
         y = np.empty(total_points, dtype=float)
+
         for i in range(6):
             x_i, y_i = xx[i], yy[i]
             x1, y1 = xx[(i + 1) % 6], yy[(i + 1) % 6]
@@ -81,6 +82,7 @@ class Triangle(BaseShape):
         total_points = 3 * points_per_edge
         x = np.empty(total_points, dtype=float)
         y = np.empty(total_points, dtype=float)
+
         for i in range(3):
             x_i, y_i = xx[i], yy[i]
             x1, y1 = xx[(i + 1) % 3], yy[(i + 1) % 3]
@@ -157,7 +159,7 @@ class ShapeGenerator:
         # Torch tensor cache
         self.base_tensor_cache = {}
 
-     # Returns a cached BaseShape object, or creates it if it does not exist yet.
+    # Returns a cached BaseShape object, or creates it if it does not exist yet.
     def get_base_shape(self, shape_name, num_points=100, **shape_kwargs):
         key = (shape_name, num_points, tuple(sorted(shape_kwargs.items())))
 
@@ -179,6 +181,7 @@ class ShapeGenerator:
         shape_name,
         num_points=100,
         center=(0.0, 0.0),
+        linear_matrix=None,
         scale=1.0,
         angle=0.0,
         **shape_kwargs,
@@ -188,12 +191,13 @@ class ShapeGenerator:
         return TransformedShape(
             base_shape,
             translation=center,
+            linear_matrix=linear_matrix,
             scale=scale,
             angle=angle,
         )
 
-    # Samples one random translation, scale, and rotation, then builds one TransformedShape.
-    # This is also for visualization and not for large dataset generation.
+    # Samples one random translation and one random 2x2 linear transform.
+    # This is for visualization and not for large dataset generation.
     def build_random_shape(self, instance_name, shape_spec, transform_cfg):
         shape_name = shape_spec.get("shape", instance_name)
         num_points = shape_spec.get("num_points", 100)
@@ -208,18 +212,27 @@ class ShapeGenerator:
             random.uniform(*transform_cfg.translation_range),
         )
 
-        scale = random.uniform(*transform_cfg.scale_range)
+        scale_x = random.uniform(*transform_cfg.scale_range)
+        scale_y = random.uniform(*transform_cfg.scale_range)
 
-        angle = 0.0 if shape_name == "circle" else np.deg2rad(
-            random.uniform(*transform_cfg.rotation_range)
+        angle = np.deg2rad(random.uniform(*transform_cfg.rotation_range))
+
+        c, s = np.cos(angle), np.sin(angle)
+
+        # A = R @ diag(scale_x, scale_y)
+        linear_matrix = np.array(
+            [
+                [c * scale_x, -s * scale_y],
+                [s * scale_x,  c * scale_y],
+            ],
+            dtype=float,
         )
 
         return self.build_shape(
             shape_name=shape_name,
             num_points=num_points,
             center=center,
-            scale=scale,
-            angle=angle,
+            linear_matrix=linear_matrix,
             **shape_kwargs,
         )
 
@@ -306,7 +319,7 @@ class ShapeGenerator:
 
         return float(value[0]), float(value[1])
 
-    # Samples a whole batch of translation, scale, and angle values.
+    # Samples a whole batch of translations and 2x2 linear transformation matrices.
     def sample_transforms_torch(
         self,
         shape_name,
@@ -329,7 +342,7 @@ class ShapeGenerator:
             dtype,
         )
 
-        scale = self._uniform(
+        scale_x = self._uniform(
             s_lo,
             s_hi,
             (batch_size,),
@@ -338,49 +351,66 @@ class ShapeGenerator:
             dtype,
         )
 
-        if shape_name == "circle":
-            angle = torch.zeros(batch_size, device=device, dtype=dtype)
-        else:
-            angle_deg = self._uniform(
-                r_lo,
-                r_hi,
-                (batch_size,),
-                generator,
-                device,
-                dtype,
-            )
-            angle = angle_deg * math.pi / 180.0
+        scale_y = self._uniform(
+            s_lo,
+            s_hi,
+            (batch_size,),
+            generator,
+            device,
+            dtype,
+        )
 
-        return translation, scale, angle
+        angle_deg = self._uniform(
+            r_lo,
+            r_hi,
+            (batch_size,),
+            generator,
+            device,
+            dtype,
+        )
 
-    # Applies translation, scale, and rotation to many copies of the same base shape at once.
+        angle = angle_deg * math.pi / 180.0
+
+        c = torch.cos(angle)
+        s = torch.sin(angle)
+
+        linear_matrix = torch.empty(
+            batch_size,
+            2,
+            2,
+            device=device,
+            dtype=dtype,
+        )
+
+        # A = R @ diag(scale_x, scale_y)
+        linear_matrix[:, 0, 0] = c * scale_x
+        linear_matrix[:, 0, 1] = -s * scale_y
+        linear_matrix[:, 1, 0] = s * scale_x
+        linear_matrix[:, 1, 1] = c * scale_y
+
+        return translation, linear_matrix
+
+    # Applies one 2x2 linear transform and one translation to each copy of the base shape.
     # This is the main vectorized Torch operation.
     @staticmethod
-    def transform_points_torch(base_points, translation, scale, angle):
+    def transform_points_torch(base_points, translation, linear_matrix):
         """
         base_points: [P, 2]
         translation: [B, 2]
-        scale: [B]
-        angle: [B]
+        linear_matrix: [B, 2, 2]
 
         returns:
             points: [B, P, 2]
         """
 
-        x = base_points[:, 0].unsqueeze(0)
-        y = base_points[:, 1].unsqueeze(0)
+        points = torch.matmul(
+            base_points.unsqueeze(0),
+            linear_matrix.transpose(1, 2),
+        )
 
-        c = torch.cos(angle).unsqueeze(1)
-        s = torch.sin(angle).unsqueeze(1)
-        sc = scale.unsqueeze(1)
+        points = points + translation.unsqueeze(1)
 
-        tx = translation[:, 0].unsqueeze(1)
-        ty = translation[:, 1].unsqueeze(1)
-
-        x_new = sc * (x * c - y * s) + tx
-        y_new = sc * (x * s + y * c) + ty
-
-        return torch.stack([x_new, y_new], dim=-1)
+        return points
 
     # Generates one Torch batch for a single shape type.
     # If return_points=False, it saves memory by only returning transform parameters.
@@ -419,7 +449,7 @@ class ShapeGenerator:
 
         generator = self._make_generator(seed, device)
 
-        translation, scale, angle = self.sample_transforms_torch(
+        translation, linear_matrix = self.sample_transforms_torch(
             shape_name=shape_name,
             batch_size=batch_size,
             transform_cfg=transform_cfg,
@@ -430,8 +460,7 @@ class ShapeGenerator:
 
         output = {
             "translation": translation,
-            "scale": scale,
-            "angle": angle,
+            "linear_matrix": linear_matrix,
             "edges": edges,
         }
 
@@ -439,8 +468,7 @@ class ShapeGenerator:
             output["points"] = self.transform_points_torch(
                 base_points=base_points,
                 translation=translation,
-                scale=scale,
-                angle=angle,
+                linear_matrix=linear_matrix,
             )
 
         return output
@@ -494,7 +522,7 @@ class ShapeGenerator:
         Efficient dataset generation.
 
         save_mode="params":
-            saves only translation, scale, angle.
+            saves only translation and linear_matrix.
             Best for huge datasets.
 
         save_mode="full":
@@ -594,8 +622,7 @@ class ShapeGenerator:
 
                 payload = {
                     "translation": batch["translation"].cpu(),
-                    "scale": batch["scale"].cpu(),
-                    "angle": batch["angle"].cpu(),
+                    "linear_matrix": batch["linear_matrix"].cpu(),
                     "spec_idx": torch.full(
                         (current_batch,),
                         spec_idx,
@@ -629,24 +656,36 @@ class ShapeGenerator:
 
 
 class TransformedShape:
-    def __init__(self, baseshape: BaseShape, translation: tuple = (0.0, 0.0), scale: float = 1.0, angle: float = 0.0):
-        self.baseshape = baseshape # if the same across different instances, it should not get copied.
-        self.translation = np.asarray(translation)
+    def __init__(
+        self,
+        baseshape: BaseShape,
+        translation: tuple = (0.0, 0.0),
+        linear_matrix=None,
+        scale: float = 1.0,
+        angle: float = 0.0,
+    ):
+        self.baseshape = baseshape
+        self.translation = np.asarray(translation, dtype=float)
+        self.linear_matrix = None if linear_matrix is None else np.asarray(linear_matrix, dtype=float)
         self.scale = scale
         self.angle = angle
         self.points = self.compute_points()
-        #self.edges = np.asarray(self.baseshape.get_edges(), dtype=int)
 
     def compute_points(self):
         points = np.asarray(self.baseshape.get_points(), dtype=float)
 
-        if self.angle != 0.0:
-            c, s = np.cos(self.angle), np.sin(self.angle)
-            rotation = np.array([[c, -s], [s, c]])
-            points = points @ rotation.T
+        if self.linear_matrix is not None:
+            points = points @ self.linear_matrix.T
+        else:
+            if self.angle != 0.0:
+                c, s = np.cos(self.angle), np.sin(self.angle)
+                rotation = np.array([[c, -s], [s, c]])
+                points = points @ rotation.T
 
-        points = points * self.scale
+            points = points * self.scale
+
         points = points + self.translation
+
         return points
 
     def get_points(self):
@@ -664,6 +703,7 @@ class TransformedShape:
 def main(cfg: DictConfig):
     print("Generating shapes with the following configuration:")
     print(cfg)
+
     shapes = {
         "circle": {"shape": "circle", "num_points": 60, "percentage": 0.30},
         "hexagon": {"shape": "hexagon", "num_points": 60, "percentage": 0.25},
@@ -671,18 +711,25 @@ def main(cfg: DictConfig):
         "star_5": {"shape": "star", "num_points": 60, "n_tips": 5, "inner_radius": 0.45, "percentage": 0.15},
         "star_12": {"shape": "star", "num_points": 2500, "n_tips": 12, "inner_radius": 0.6, "percentage": 0.10},
     }
+
     shape_generator = ShapeGenerator()
+
     V, L = shape_generator.generate_shapes(shapes, cfg)
+
     print("Shapes generated successfully!")
+
     fig, ax = plt.subplots()
     colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple','tab:cyan']
+
     for i, (shape_name, v, l) in enumerate(zip(shapes.keys(), V, L)):
         color = colors[i % len(colors)]
         ax.scatter(v[:, 0], v[:, 1], color=color, label=shape_name)
+
         for edge in l:
             ax.plot(v[edge, 0], v[edge, 1], color=color, linewidth=1.2)
 
     ax.axis('equal')
+
     output_file = "data_generation/generated_shapes.png"
     fig.savefig(output_file, dpi=200, bbox_inches='tight', facecolor='white')
     print(f"Saved {output_file}")
@@ -704,9 +751,5 @@ def main(cfg: DictConfig):
     print(f"Number of shards: {len(manifest['shards'])}")
 
 
-if __name__ == "__main__":    main()
-
-
-   
-
-   
+if __name__ == "__main__":
+    main()
