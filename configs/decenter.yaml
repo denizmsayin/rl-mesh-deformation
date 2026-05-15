@@ -1,0 +1,11 @@
+defaults:
+  - dataset: shapes_basic
+  - dataset/transform: default
+  - model: polygon_cnn
+  - train: default
+  - _self_
+
+# Per-script knobs (not shareable).
+samples_per_class: 2000
+device: auto
+val_fraction: 0.2
