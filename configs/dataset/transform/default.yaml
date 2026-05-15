@@ -1,0 +1,3 @@
+translation_range: [-1.0, 1.0]
+scale_range: [0.5, 2.0]
+rotation_range: [0.0, 360.0]

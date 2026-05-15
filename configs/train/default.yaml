@@ -1,0 +1,4 @@
+steps: 400
+batch_size: 128
+lr: 1.0e-3
+seed: 0

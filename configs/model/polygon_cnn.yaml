@@ -1,0 +1,6 @@
+_target_: rlmd.models.PolygonCNN
+in_channels: 2
+hidden_channels: [32, 64]
+out_channels: 128
+kernel_size: 5
+layernorm: true

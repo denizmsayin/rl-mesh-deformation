@@ -1,34 +1,31 @@
-"""Smoke test: classify circle / hexagon / triangle / 5-star polygons with PolygonCNN.
+"""Smoke test: classify shapes with a configurable polygon encoder.
 
 Run from repo root:
     python scripts/smoke_classify.py
+    python scripts/smoke_classify.py train.steps=200 model.kernel_size=3
+    python scripts/smoke_classify.py dataset/transform=default_no_translation normalize=false
+    python scripts/smoke_classify.py model.hidden_channels=[64,128] samples_per_class=4000
 
-Expectation: val accuracy should reach >>25% (random baseline for 4 classes) within
-a few hundred steps. On a typical run a tiny CNN gets >95% — if it doesn't, the
-encoder is probably miswired.
+Expectation: val accuracy >> 1/num_classes within a few hundred steps. On a typical
+run the tiny PolygonCNN gets >95% — if it doesn't, the encoder is probably miswired.
 """
-import argparse
 import sys
 from pathlib import Path
 
+import hydra
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from hydra.utils import instantiate
+from omegaconf import DictConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from data_generation.generate import ShapeGenerator  # noqa: E402
-from rlmd.models import PolygonCNN  # noqa: E402
 
 
 def normalize_polygons(V, num_verts):
-    """Center each polygon at its centroid and rescale to unit mean radius.
-
-    Removes the affine nuisance (translation + global scale) so the CNN can
-    focus on shape rather than coordinate magnitude. Anisotropic scale and
-    rotation are left in — they are real shape variation the network must
-    learn to be invariant to.
-    """
+    """Center each polygon at its centroid and rescale to unit mean radius."""
     N_max = V.shape[1]
     mask = (torch.arange(N_max, device=V.device)[None, :] < num_verts[:, None]).to(V.dtype)
     m = mask.unsqueeze(-1)
@@ -40,40 +37,37 @@ def normalize_polygons(V, num_verts):
     return Vc * m
 
 
-def generate_dataset(n_per_class, num_points, seed, device):
-    shapes = {
-        "circle": {"shape": "circle", "num_points": num_points},
-        "hexagon": {"shape": "hexagon", "num_points": num_points},
-        "triangle": {"shape": "triangle", "num_points": num_points},
-        "star_5": {"shape": "star", "num_points": num_points, "n_tips": 5, "inner_radius": 0.45},
-    }
-    transform_cfg = {
-        "translation_range": [-1.0, 1.0],
-        "scale_range": [0.5, 2.0],
-        "rotation_range": [0.0, 360.0],
-    }
+def generate_dataset(shapes, transform_cfg, samples_per_class, seed, device):
     mixture = ShapeGenerator().generate_mixture_batch_torch(
         shapes=shapes,
         transform_cfg=transform_cfg,
-        samples_per_shape=n_per_class,
+        samples_per_shape=samples_per_class,
         seed=seed,
         device=device,
     )
 
-    Vs, Ls, ys, names = [], [], [], []
-    for cls_idx, (name, batch) in enumerate(mixture.items()):
-        pts = batch.points()                              # (B, P, 2)
-        edges = batch.edges                               # (P, 2)
-        B = pts.shape[0]
-        Vs.append(pts)
-        Ls.append(edges.unsqueeze(0).expand(B, -1, -1))
-        ys.append(torch.full((B,), cls_idx, dtype=torch.long, device=device))
-        names.append(name)
+    items = list(mixture.items())
+    total_B = sum(batch.points().shape[0] for _, batch in items)
+    max_P = max(batch.points().shape[1] for _, batch in items)
 
-    V = torch.cat(Vs, dim=0)
-    L = torch.cat(Ls, dim=0)
-    y = torch.cat(ys, dim=0)
-    num_verts = torch.full((V.shape[0],), V.shape[1], dtype=torch.long, device=device)
+    V = torch.zeros(total_B, max_P, 2, device=device)
+    L = torch.zeros(total_B, max_P, 2, dtype=torch.long, device=device)
+    num_verts = torch.zeros(total_B, dtype=torch.long, device=device)
+    y = torch.zeros(total_B, dtype=torch.long, device=device)
+    names = []
+
+    i = 0
+    for cls_idx, (name, batch) in enumerate(items):
+        pts = batch.points()
+        edges = batch.edges
+        B, P, _ = pts.shape
+        V[i:i + B, :P] = pts
+        L[i:i + B, :P] = edges.unsqueeze(0).expand(B, -1, -1)
+        num_verts[i:i + B] = P
+        y[i:i + B] = cls_idx
+        names.append(name)
+        i += B
+
     return V, L, num_verts, y, names
 
 
@@ -84,12 +78,11 @@ class PolygonClassifier(nn.Module):
         self.head = nn.Linear(feature_dim, num_classes)
 
     def forward(self, V, L, num_verts, check_l=False):
-        feats = self.encoder(V, L, num_verts, check_l=check_l)  # (B, N_max, F)
+        feats = self.encoder(V, L, num_verts, check_l=check_l)
         N_max = feats.shape[1]
         mask = (torch.arange(N_max, device=V.device)[None, :] < num_verts[:, None])
         feats = feats.masked_fill(~mask.unsqueeze(-1), float("-inf"))
-        pooled = feats.max(dim=1).values
-        return self.head(pooled)
+        return self.head(feats.max(dim=1).values)
 
 
 def confusion_matrix(y_true, y_pred, num_classes):
@@ -108,64 +101,53 @@ def print_confusion(cm, names):
         print(f"  {name:>{width}}  {row}")
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--steps", type=int, default=400)
-    p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--n-per-class", type=int, default=2000)
-    p.add_argument("--num-points", type=int, default=60)
-    p.add_argument("--kernel-size", type=int, default=5)
-    p.add_argument("--no-normalize", action="store_true",
-                   help="skip centroid/mean-radius normalization (sanity check)")
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    args = p.parse_args()
+def resolve_device(device_cfg):
+    if device_cfg == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return device_cfg
 
-    torch.manual_seed(args.seed)
 
-    print(f"Generating data on {args.device}...")
+@hydra.main(version_base=None, config_path="../configs", config_name="classify")
+def main(cfg: DictConfig):
+    device = resolve_device(cfg.device)
+    torch.manual_seed(cfg.train.seed)
+
+    print(f"Generating data on {device}...")
     V, L, num_verts, y, class_names = generate_dataset(
-        n_per_class=args.n_per_class,
-        num_points=args.num_points,
-        seed=args.seed,
-        device=args.device,
+        shapes=cfg.dataset.shapes,
+        transform_cfg=cfg.dataset.transform,
+        samples_per_class=cfg.samples_per_class,
+        seed=cfg.train.seed,
+        device=device,
     )
-    if not args.no_normalize:
+    if cfg.normalize:
         V = normalize_polygons(V, num_verts)
     num_classes = len(class_names)
     print(f"  {V.shape[0]} samples, {num_classes} classes: {class_names}  "
-          f"(normalize={'off' if args.no_normalize else 'on'})")
+          f"(normalize={'on' if cfg.normalize else 'off'})")
 
-    perm = torch.randperm(V.shape[0], device=args.device)
-    n_val = V.shape[0] // 5
+    perm = torch.randperm(V.shape[0], device=device)
+    n_val = int(V.shape[0] * cfg.val_fraction)
     val_idx, train_idx = perm[:n_val], perm[n_val:]
 
-    feat_dim = 128
-    encoder = PolygonCNN(
-        in_channels=2,
-        hidden_channels=(32, 64),
-        out_channels=feat_dim,
-        kernel_size=args.kernel_size,
-        layernorm=True,
-    )
-    model = PolygonClassifier(encoder, feature_dim=feat_dim, num_classes=num_classes).to(args.device)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+    encoder = instantiate(cfg.model)
+    feat_dim = cfg.model.out_channels
+    model = PolygonClassifier(encoder, feature_dim=feat_dim, num_classes=num_classes).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
 
-    # One-time sanity check on the L tensor.
     _ = model(V[:2], L[:2], num_verts[:2], check_l=True)
 
-    print(f"Training {args.steps} steps, batch size {args.batch_size}...")
-    log_every = max(1, args.steps // 10)
+    print(f"Training {cfg.train.steps} steps, batch size {cfg.train.batch_size}...")
+    log_every = max(1, cfg.train.steps // 10)
     model.train()
-    for step in range(args.steps):
-        bi = train_idx[torch.randint(len(train_idx), (args.batch_size,), device=args.device)]
+    for step in range(cfg.train.steps):
+        bi = train_idx[torch.randint(len(train_idx), (cfg.train.batch_size,), device=device)]
         logits = model(V[bi], L[bi], num_verts[bi])
         loss = F.cross_entropy(logits, y[bi])
         opt.zero_grad()
         loss.backward()
         opt.step()
-        if step % log_every == 0 or step == args.steps - 1:
+        if step % log_every == 0 or step == cfg.train.steps - 1:
             with torch.no_grad():
                 acc = (logits.argmax(-1) == y[bi]).float().mean().item()
             print(f"  step {step:4d}  loss={loss.item():.4f}  train_acc(batch)={acc:.3f}")

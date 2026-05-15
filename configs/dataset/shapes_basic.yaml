@@ -1,0 +1,19 @@
+# Shared shape catalogue. The classification smoke test, the disk-dataset
+# generator, and any future script that needs polygons can all compose this
+# group entry. Per-script knobs like "how many samples per class" or "total N"
+# live in the top-level config, not here.
+shapes:
+  circle:
+    shape: circle
+    num_points: 60
+  hexagon:
+    shape: hexagon
+    num_points: 60
+  triangle:
+    shape: triangle
+    num_points: 60
+  star_5:
+    shape: star
+    num_points: 60
+    n_tips: 5
+    inner_radius: 0.45

@@ -1,0 +1,18 @@
+# Refactored shape of generate.yaml using the shared dataset groups.
+# Not wired up to generate.py yet — kept here as the target structure.
+defaults:
+  - dataset: shapes_basic
+  - dataset/transform: default
+  - _self_
+
+seed: 123
+device: auto
+preview_samples_per_shape: 20
+preview_output_file: data_generation/generated_shapes.png
+
+generation:
+  N: 100000
+  batch_size: 4096
+  out_dir: data_generation/generated_dataset
+  save_mode: params
+  overwrite: true
