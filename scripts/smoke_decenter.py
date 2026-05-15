@@ -14,6 +14,7 @@ LayerNorm over the channel dim partially strips the translation signal that
 the first conv just encoded.
 """
 import sys
+import time
 from pathlib import Path
 
 import hydra
@@ -90,6 +91,7 @@ def resolve_device(device_cfg):
 @hydra.main(version_base=None, config_path="../configs", config_name="decenter")
 def main(cfg: DictConfig):
     device = resolve_device(cfg.device)
+    is_cuda = torch.device(device).type == "cuda"
     torch.manual_seed(cfg.train.seed)
 
     print(f"Generating data on {device}...")
@@ -123,6 +125,11 @@ def main(cfg: DictConfig):
     print(f"Training {cfg.train.steps} steps, batch size {cfg.train.batch_size}...")
     log_every = max(1, cfg.train.steps // 10)
     model.train()
+    if is_cuda:
+        torch.cuda.synchronize()
+    t_start = time.perf_counter()
+    t_last = t_start
+    steps_since_log = 0
     for step in range(cfg.train.steps):
         bi = train_idx[torch.randint(len(train_idx), (cfg.train.batch_size,), device=device)]
         pred = model(V[bi], L[bi], num_verts[bi])
@@ -130,8 +137,17 @@ def main(cfg: DictConfig):
         opt.zero_grad()
         loss.backward()
         opt.step()
+        steps_since_log += 1
         if step % log_every == 0 or step == cfg.train.steps - 1:
-            print(f"  step {step:4d}  loss={loss.item():.4e}")
+            if device == "cuda":
+                torch.cuda.synchronize()
+            now = time.perf_counter()
+            ms_per_step = (now - t_last) / max(steps_since_log, 1) * 1000.0
+            elapsed = now - t_start
+            print(f"  step {step:4d}  loss={loss.item():.4e}  "
+                  f"{ms_per_step:6.2f} ms/step  elapsed={elapsed:6.2f}s")
+            t_last = now
+            steps_since_log = 0
 
     model.eval()
     with torch.no_grad():
