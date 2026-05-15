@@ -32,6 +32,8 @@ scikit-image = "*"
 hydra-core = "*"
 omegaconf = "*"
 
+jupyter = "*"
+
 [pypi-dependencies]
 
 rlmd = { path = ".", editable = true }
