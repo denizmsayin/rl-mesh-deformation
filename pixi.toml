@@ -24,9 +24,6 @@ ipython = "*"
 plotly = "*"
 trimesh = "*"
 uniplot = "*"
-
-pytorch = "*"
-torchvision = "*"
 scikit-learn = "*"
 scikit-image = "*"
 hydra-core = "*"
@@ -47,5 +44,40 @@ pytest = "*"
 portalocker = "*"
 iopath = "*"
 
+# Lift pytorch into its own feature to separate CPU/GPU
+[feature.cpu-only.dependencies]
+pytorch = "==2.10.0"
+torchvision = "*"
+
+### CUDA supporting extended environment for linux-64
+### use with: pixi shell -e cuda, pixi run -e cuda etc.
+
+[feature.cuda]
+platforms = ["linux-64"]
+system-requirements = { cuda = "12.8" }
+channels = ["nvidia", "conda-forge"]
+
+[feature.cuda.dependencies]
+cuda-toolkit = "12.8.*"
+cuda-libraries-dev = "12.8.*"
+gcc = "13.*"
+gxx = "13.*"
+
+[feature.cuda.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
+index-strategy = "unsafe-best-match"
+
+[feature.cuda.pypi-dependencies]
+torch = "==2.10.0"
+torchvision = "*"
+
+[feature.cuda.activation]
+env = { LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH" }
+
+[environments]
+default = ["cpu-only"]
+cuda = ["cuda"]
+
 [tasks]
 pytorch3d-install = { cmd = "pip install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git@v0.7.9", env = { MAX_JOBS = "4" } }
+

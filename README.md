@@ -17,6 +17,18 @@ Some libraries are more of a pain to install than others, especially if we have 
 pixi run pytorch3d-install
 ```
 
+### CUDA environment (linux-64 only)
+
+For running on GPU servers, a separate `cuda` environment is available. It requires CUDA 12.8 and uses the official PyTorch CUDA wheels. Activate it by passing `-e cuda` to any pixi command:
+
+```sh
+pixi shell -e cuda
+pixi run -e cuda python train.py
+pixi run -e cuda pytorch3d-install  # build pytorch3d against the CUDA torch
+```
+
+The default CPU environment is unaffected — omitting `-e cuda` always gives you the standard environment.
+
 ## TODOs (17-04)
 
 Run the pytorch3d notebook: https://github.com/facebookresearch/pytorch3d/blob/main/docs/tutorials/deform_source_mesh_to_target_mesh.ipynb
