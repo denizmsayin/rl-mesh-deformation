@@ -1,0 +1,20 @@
+dataset_folder : 
+dataset_name : 
+shape_names : ["circle", "triangle","hexagon", "star_5", "star_12"]
+num_shapes_per_dataset: #how many samples in test set
+model:
+      _target_ :  #instantiate
+output_csv: evaluation_results.csv 
+output_dir: ${hydra:runtime.output_dir} 
+cache_size : 8
+batch_size : 
+shuffle: 
+num_workers: 0
+pin_memory: false 
+drop_last : false 
+device : "cuda"
+
+
+hydra:
+  run:
+    dir: outputs/evaluate/${now:%Y-%m-%d}/${now:%H-%M-%S}
