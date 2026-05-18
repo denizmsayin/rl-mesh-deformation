@@ -9,9 +9,6 @@ Run from repo root:
 Expectation: val accuracy >> 1/num_classes within a few hundred steps. On a typical
 run the tiny PolygonCNN gets >95% — if it doesn't, the encoder is probably miswired.
 """
-import sys
-from pathlib import Path
-
 import hydra
 import torch
 import torch.nn as nn
@@ -19,9 +16,7 @@ import torch.nn.functional as F
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from data_generation.generate import ShapeGenerator  # noqa: E402
+from rlmd.data.generation import ShapeGenerator
 
 
 def normalize_polygons(V, num_verts):

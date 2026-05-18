@@ -2,7 +2,7 @@ import math
 
 import torch
 
-from data_generation.generate import ShapeGenerator
+from rlmd.data.generation import ShapeGenerator
 from rlmd.batching import pad_polylines
 from rlmd.ops import (
     polyline_edge_loss,

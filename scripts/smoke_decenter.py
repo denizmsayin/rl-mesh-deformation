@@ -13,9 +13,7 @@ dropping absolute-position information — try `model.layernorm=false`, since
 LayerNorm over the channel dim partially strips the translation signal that
 the first conv just encoded.
 """
-import sys
 import time
-from pathlib import Path
 
 import hydra
 import torch
@@ -24,9 +22,7 @@ import torch.nn.functional as F
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from data_generation.generate import ShapeGenerator  # noqa: E402
+from rlmd.data.generation import ShapeGenerator
 
 
 def generate_dataset(shapes, transform_cfg, samples_per_class, seed, device):

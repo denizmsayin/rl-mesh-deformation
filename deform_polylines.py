@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from data_generation.generate import ShapeGenerator
+from rlmd.data.generation import ShapeGenerator
 from rlmd.batching import pad_polylines
 from rlmd.ops import (
     distance_loss,
@@ -13,7 +13,7 @@ from rlmd.ops import (
     polyline_normal_consistency,
     sample_points_from_polylines,
 )
-from visualization.visualize import draw_edges
+from rlmd.visualization.visualize import draw_edges
 
 
 BATCH_SIZE = 10
