@@ -1,3 +1,5 @@
+"""Evaluation harness CLI (Hydra). Set ``visualize_deformations=true`` in config or on the command line to write per-batch PNGs (same layout as ``scripts/deform_polylines.py``)."""
+
 import hydra
 from omegaconf import DictConfig
 

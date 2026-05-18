@@ -125,3 +125,54 @@ def visualize_matching(
         plt.show()
 
     return ax, match_idx
+
+
+def plot_polylines_initial_vs_final(
+    V_init,
+    V_final,
+    L_src,
+    nv_src,
+    V_tgt,
+    L_tgt,
+    nv_tgt,
+    out_path,
+    *,
+    dpi=150,
+    title_prefix="problem",
+    first_index=0,
+):
+    """Per batch item: one row with initial | final (src vs tgt overlays), rows stacked top-to-bottom."""
+    SRC_COLOR = "#1f77b4"
+    TGT_COLOR = "#ff7f0e"
+
+    def _draw_pair(ax, V_s, L_s, nv_s, V_t, L_t, nv_t, i):
+        n_s, n_t = int(nv_s[i].item()), int(nv_t[i].item())
+        v_s = V_s[i, :n_s].detach().cpu().numpy()
+        v_t = V_t[i, :n_t].detach().cpu().numpy()
+        e_s = L_s[i, :n_s].cpu().numpy()
+        e_t = L_t[i, :n_t].cpu().numpy()
+        draw_edges(ax, v_s, e_s, SRC_COLOR)
+        draw_edges(ax, v_t, e_t, TGT_COLOR)
+        all_pts = np.vstack([v_s, v_t])
+        span = float(all_pts.max() - all_pts.min())
+        pad = 0.1 * span if span > 0 else 0.05
+        ax.set_xlim(float(all_pts[:, 0].min()) - pad, float(all_pts[:, 0].max()) + pad)
+        ax.set_ylim(float(all_pts[:, 1].min()) - pad, float(all_pts[:, 1].max()) + pad)
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    if V_init.dim() != 3 or V_init.shape[-1] != 2:
+        raise ValueError("plot_polylines_initial_vs_final expects V with shape (B, N, 2).")
+
+    B = V_init.shape[0]
+    row_h = 2.75
+    fig, axes = plt.subplots(B, 2, figsize=(2.4 * 2 + 0.9, row_h * B), squeeze=False)
+    axes[0, 0].set_title("initial", fontsize=11)
+    axes[0, 1].set_title("final", fontsize=11)
+    for i in range(B):
+        _draw_pair(axes[i, 0], V_init, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+        _draw_pair(axes[i, 1], V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+        axes[i, 0].set_ylabel(f"{title_prefix}\n{first_index + i}", fontsize=10)
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor="white")
+    plt.close(fig)

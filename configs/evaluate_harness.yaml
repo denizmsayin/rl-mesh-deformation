@@ -26,6 +26,9 @@ device: auto
 
 output_csv: results.csv
 
+# When true, write one PNG per batch (same layout as scripts/deform_polylines.py). CLI: visualize_deformations=true
+visualize_deformations: false
+
 hydra:
   job:
     chdir: false

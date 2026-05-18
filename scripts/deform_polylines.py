@@ -1,4 +1,3 @@
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -13,7 +12,7 @@ from rlmd.ops import (
     polyline_normal_consistency,
     sample_points_from_polylines,
 )
-from rlmd.visualization.visualize import draw_edges
+from rlmd.visualization.visualize import plot_polylines_initial_vs_final
 
 
 BATCH_SIZE = 10
@@ -72,37 +71,6 @@ def compute_losses(V, L, nv, V_tgt, L_tgt, nv_tgt):
     return total, l_chamfer, l_edge, l_normal, l_laplacian
 
 
-def _draw_pair(ax, V_src, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i):
-    n_s, n_t = nv_src[i].item(), nv_tgt[i].item()
-    v_s = V_src[i, :n_s].detach().cpu().numpy()
-    v_t = V_tgt[i, :n_t].detach().cpu().numpy()
-    e_s = L_src[i, :n_s].cpu().numpy()
-    e_t = L_tgt[i, :n_t].cpu().numpy()
-    draw_edges(ax, v_s, e_s, '#1f77b4')
-    draw_edges(ax, v_t, e_t, '#ff7f0e')
-    all_pts = np.vstack([v_s, v_t])
-    pad = 0.1 * (all_pts.max() - all_pts.min())
-    ax.set_xlim(all_pts[:, 0].min() - pad, all_pts[:, 0].max() + pad)
-    ax.set_ylim(all_pts[:, 1].min() - pad, all_pts[:, 1].max() + pad)
-    ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
-
-
-def plot_states(V_init, V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt, out_path):
-    B = V_init.shape[0]
-    fig, axes = plt.subplots(2, B, figsize=(2.4 * B, 5.5))
-    for i in range(B):
-        _draw_pair(axes[0, i], V_init, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
-        _draw_pair(axes[1, i], V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
-        axes[0, i].set_title(f'problem {i}', fontsize=10)
-    axes[0, 0].set_ylabel('initial', fontsize=11)
-    axes[1, 0].set_ylabel('final', fontsize=11)
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-    print(f'saved {out_path}')
-
-
 def main():
     V_src0, L_src, nv_src, V_tgt, L_tgt, nv_tgt = build_batch()
 
@@ -135,8 +103,12 @@ def main():
             )
             print(f'  problem {i}: total={total.item():.4f} chamfer={lc.item():.4f}')
 
-    plot_states(V_src0, V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt,
-                'deform_polylines.png')
+    plot_polylines_initial_vs_final(
+        V_src0, V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt,
+        'deform_polylines.png',
+        title_prefix='problem',
+    )
+    print('saved deform_polylines.png')
 
 
 if __name__ == '__main__':

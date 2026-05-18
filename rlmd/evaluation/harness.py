@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from rlmd.dataset import shape_collate_fn
+from rlmd.visualization.visualize import plot_polylines_initial_vs_final
 
 
 CSV_HEADER = [
@@ -96,14 +97,16 @@ def run(cfg: DictConfig) -> str:
     scenario_name = scenario.name
 
     sample_idx = 0
+    visualize = bool(cfg.get("visualize_deformations", False))
     with open(output_csv, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
             writer.writerow(CSV_HEADER)
 
-        for batch_src, batch_tgt in tqdm(zip(loader_src, loader_tgt),
-                                         total=len(loader_src),
-                                         desc="harness"):
+        for batch_i, (batch_src, batch_tgt) in tqdm(
+                enumerate(zip(loader_src, loader_tgt)),
+                total=len(loader_src),
+                desc="harness"):
             V_src, L_src, nv_src, shapes_src = _to_device(batch_src, device)
             V_tgt, L_tgt, nv_tgt, shapes_tgt = _to_device(batch_tgt, device)
 
@@ -112,6 +115,23 @@ def run(cfg: DictConfig) -> str:
                 (V_tgt, L_tgt, nv_tgt),
                 matcher,
             )
+
+            if visualize:
+                vis_path = os.path.join(output_dir,
+                                        f"deformations_batch_{batch_i:05d}.png")
+                plot_polylines_initial_vs_final(
+                    V_src.detach().cpu(),
+                    V_final.detach().cpu(),
+                    L_src.detach().cpu(),
+                    nv_src.detach().cpu(),
+                    V_tgt.detach().cpu(),
+                    L_tgt.detach().cpu(),
+                    nv_tgt.detach().cpu(),
+                    vis_path,
+                    title_prefix="sample",
+                    first_index=sample_idx,
+                )
+                print(f"wrote visualization {vis_path}")
 
             with torch.no_grad():
                 poly_pred = (V_final, L_src, nv_src)
