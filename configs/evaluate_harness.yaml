@@ -1,0 +1,28 @@
+defaults:
+  - dataset_src: circle_set
+  - dataset_tgt: any_set
+  - matcher: knn_3d
+  - scenario: sgd_default
+  - _self_
+
+metrics:
+  - _target_: rlmd.evaluation.metrics.ChamferMetric
+    num_samples: 1024
+    point_reduction: mean
+    norm: 2
+
+eval_num_samples: 32
+seed_src: 0
+seed_tgt: 1
+batch_size: 16
+num_workers: 0
+pin_memory: false
+device: auto
+
+output_csv: results.csv
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/evaluate_harness/${now:%Y-%m-%d}/${now:%H-%M-%S}

@@ -1,0 +1,11 @@
+_target_: rlmd.evaluation.scenarios.SgdScenario
+name: sgd_quick
+num_iters: 100
+num_samples: 200
+lr: 1.0
+momentum: 0.9
+w_chamfer: 1.0
+w_edge: 1.0
+w_normal: 0.01
+w_laplacian: 0.1
+distance_p: 2

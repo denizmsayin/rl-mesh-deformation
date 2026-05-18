@@ -1,3 +1,5 @@
+from typing import Dict
+
 import torch
 from pytorch3d.loss import chamfer_distance
 
@@ -6,7 +8,7 @@ from rlmd.ops.sampling import sample_points_from_polylines
 
 class ChamferMetric:
     """
-    Chamfer distance between two batches of padded polylines.
+    Per-sample chamfer distances between two batches of padded polylines.
 
     Each input is a (V, L, num_verts) tuple following the project's batched
     polygon convention:
@@ -16,8 +18,11 @@ class ChamferMetric:
 
     Points are first sampled along each polyline (length-weighted) so both
     clouds have a fixed size of ``num_samples`` per item, then chamfer is
-    computed in each direction separately and both are returned.
+    computed in each direction separately. The metric emits three sub-values
+    per sample: a→b, b→a, and their mean.
     """
+
+    name = "chamfer"
 
     def __init__(self, num_samples: int = 1024, point_reduction: str = "mean", norm: int = 2):
         if point_reduction not in ("mean", "sum"):
@@ -40,7 +45,7 @@ class ChamferMetric:
         )
         return d
 
-    def __call__(self, poly_a, poly_b):
+    def __call__(self, poly_a, poly_b) -> Dict[str, torch.Tensor]:
         V_a, L_a, n_a = poly_a
         V_b, L_b, n_b = poly_b
 
@@ -49,4 +54,9 @@ class ChamferMetric:
 
         a_to_b = self._one_direction(pts_a, pts_b)
         b_to_a = self._one_direction(pts_b, pts_a)
-        return a_to_b, b_to_a
+        sym = 0.5 * (a_to_b + b_to_a)
+        return {
+            "chamfer_a2b": a_to_b,
+            "chamfer_b2a": b_to_a,
+            "chamfer_sym": sym,
+        }
