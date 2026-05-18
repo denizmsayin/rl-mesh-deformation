@@ -10,6 +10,8 @@ metrics:
     num_samples: 1024
     point_reduction: mean
     norm: 2
+    with_normals: true
+    abs_cosine: false
   - _target_: rlmd.evaluation.metrics.SegmentStdMetric
     unbiased: false
 
