@@ -1,14 +1,19 @@
-translation_range: [-1.0, 1.0]
-scale_range: [0.2, 2.0]
-rotation_range: [0.0, 360.0]
+defaults:
+  - dataset: circle_only
+  - dataset/transform: default
+  - _self_
 
 seed: 123
 device: auto
 preview_samples_per_shape: 20
 preview_output_file: data_generation/generated_shapes.png
 
+# Output root is generated_dataset/<name>/ (manifest + per-shape shards).
+dataset_name: ellipse_set
+out_dir_root: data_generation/generated_dataset
+out_dir: ${out_dir_root}/${dataset_name}
+
 N: 100000
 batch_size: 4096
-out_dir: data_generation/generated_dataset
 save_mode: params
 overwrite: true

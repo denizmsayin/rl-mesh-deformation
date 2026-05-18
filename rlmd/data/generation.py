@@ -474,6 +474,10 @@ class ShapeGenerator:
             dtype,
         )
 
+        isotropic_scale = bool(
+            self._cfg_get(transform_cfg, "isotropic_scale", False)
+        )
+
         scale_x = self._uniform(
             s_lo,
             s_hi,
@@ -483,14 +487,17 @@ class ShapeGenerator:
             dtype,
         )
 
-        scale_y = self._uniform(
-            s_lo,
-            s_hi,
-            (batch_size,),
-            generator,
-            device,
-            dtype,
-        )
+        if isotropic_scale:
+            scale_y = scale_x
+        else:
+            scale_y = self._uniform(
+                s_lo,
+                s_hi,
+                (batch_size,),
+                generator,
+                device,
+                dtype,
+            )
 
         angle_deg = self._uniform(
             r_lo,

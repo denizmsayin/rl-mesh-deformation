@@ -1,0 +1,5 @@
+shapes:
+  circle:
+    shape: circle
+    num_points: 60
+    percentage: 1.0

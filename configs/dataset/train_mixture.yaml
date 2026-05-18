@@ -1,0 +1,26 @@
+# Same class mixture as legacy scripts/generate.py (for targets / full datasets).
+shapes:
+  circle:
+    shape: circle
+    num_points: 60
+    percentage: 0.30
+  hexagon:
+    shape: hexagon
+    num_points: 60
+    percentage: 0.25
+  triangle:
+    shape: triangle
+    num_points: 60
+    percentage: 0.20
+  star_5:
+    shape: star
+    num_points: 60
+    n_tips: 5
+    inner_radius: 0.45
+    percentage: 0.15
+  star_12:
+    shape: star
+    num_points: 2500
+    n_tips: 12
+    inner_radius: 0.6
+    percentage: 0.10

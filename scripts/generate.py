@@ -1,7 +1,7 @@
 import hydra
 import matplotlib.pyplot as plt
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlmd.data.generation import ShapeGenerator
 
@@ -11,13 +11,8 @@ def main(cfg: DictConfig):
     print("Generating shapes with the following configuration:")
     print(cfg)
 
-    shapes = {
-        "circle": {"shape": "circle", "num_points": 60, "percentage": 0.30},
-        "hexagon": {"shape": "hexagon", "num_points": 60, "percentage": 0.25},
-        "triangle": {"shape": "triangle", "num_points": 60, "percentage": 0.20},
-        "star_5": {"shape": "star", "num_points": 60, "n_tips": 5, "inner_radius": 0.45, "percentage": 0.15},
-        "star_12": {"shape": "star", "num_points": 2500, "n_tips": 12, "inner_radius": 0.6, "percentage": 0.10},
-    }
+    shapes = OmegaConf.to_container(cfg.dataset.shapes, resolve=True)
+    transform_cfg = cfg.dataset.transform
 
     shape_generator = ShapeGenerator()
 
@@ -38,7 +33,7 @@ def main(cfg: DictConfig):
 
     preview_batch = shape_generator.generate_mixture_batch_torch(
         shapes=shapes,
-        transform_cfg=cfg,
+        transform_cfg=transform_cfg,
         samples_per_shape=preview_samples_per_shape,
         seed=seed,
         device=device,
@@ -58,7 +53,7 @@ def main(cfg: DictConfig):
 
     manifest = shape_generator.generate_to_disk_torch(
         shapes=shapes,
-        transform_cfg=cfg,
+        transform_cfg=transform_cfg,
         out_dir=out_dir,
         N=dataset_N,
         batch_size=batch_size,
