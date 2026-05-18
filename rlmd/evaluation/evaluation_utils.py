@@ -92,39 +92,3 @@ def chamfer(x: torch.Tensor, y: torch.Tensor, x_lengths: torch.Tensor, y_lengths
 
     return chamf, chamf_normal
 
-def segments_std(points: torch.Tensor, connect: torch.Tensor, lengths: torch.Tensor):
-    """
-    Input :
-            points: (B, V, 2) cloud of points 
-            connect : (B, L, 2) connectivity info
-            lengths : (B, ) original number of points per batch before padding
-    output: 
-            std_dev : scalar , mean of the std deviation of the segment lengths across batches 
-
-    """
-
-    batches = points.shape[0]
-
-    std_devs = []
-    for b in range(batches):
-        l = int(lengths[b].item())
-        points_batch = points[b, :l, :] # not considering padded points 
-        segment_lengths = []
-
-        for segment in connect[b, :, :]:
-            i = int(segment[0].item())
-            j = int(segment[1].item())
-
-            if 0 <= i < l and 0 <= j < l:
-                segment_lengths.append(torch.norm(points_batch[i, :] - points_batch[j, :]))
-
-        if len(segment_lengths) > 0:
-            segment_lengths = torch.stack(segment_lengths)
-            std_devs.append(segment_lengths.std(unbiased=False))
-        else:
-            std_devs.append(points.new_tensor(0.0))
-
-    return torch.stack(std_devs).mean()
-    
-
-

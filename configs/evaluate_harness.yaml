@@ -10,6 +10,8 @@ metrics:
     num_samples: 1024
     point_reduction: mean
     norm: 2
+  - _target_: rlmd.evaluation.metrics.SegmentStdMetric
+    unbiased: false
 
 eval_num_samples: 32
 seed_src: 0
