@@ -33,23 +33,28 @@ W_LAPLACIAN = 0.1
 
 def build_batch():
     gen = ShapeGenerator()
-    src = [gen.build_shape('circle', num_points=NUM_POINTS) for _ in range(BATCH_SIZE)]
+    base_src = gen.get_base_shape('circle', num_points=NUM_POINTS)
+    base_tgt = gen.get_base_shape(TARGET_SHAPE, num_points=NUM_POINTS)
+
     angles = np.linspace(0.0, 2 * np.pi, BATCH_SIZE, endpoint=False)
     n_still = BATCH_SIZE // 2
     t_angles = np.linspace(0.0, 2 * np.pi, BATCH_SIZE - n_still, endpoint=False)
     centers = [(0.0, 0.0)] * n_still + [
         (TRANSLATION_RADIUS * np.cos(a), TRANSLATION_RADIUS * np.sin(a)) for a in t_angles
     ]
-    tgt = [
-        gen.build_shape(TARGET_SHAPE, num_points=NUM_POINTS, angle=a, center=c)
-        for a, c in zip(angles, centers)
-    ]
-    V_src, L_src, nv_src = pad_polylines(
-        [s.get_points() for s in src], [s.get_edges() for s in src]
-    )
-    V_tgt, L_tgt, nv_tgt = pad_polylines(
-        [s.get_points() for s in tgt], [s.get_edges() for s in tgt]
-    )
+
+    src_pts = [base_src.get_points() for _ in range(BATCH_SIZE)]
+    src_edges = [base_src.get_edges() for _ in range(BATCH_SIZE)]
+
+    tgt_pts = []
+    for a, c in zip(angles, centers):
+        cos_a, sin_a = np.cos(a), np.sin(a)
+        R = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+        tgt_pts.append(base_tgt.get_points() @ R.T + np.array(c))
+    tgt_edges = [base_tgt.get_edges() for _ in range(BATCH_SIZE)]
+
+    V_src, L_src, nv_src = pad_polylines(src_pts, src_edges)
+    V_tgt, L_tgt, nv_tgt = pad_polylines(tgt_pts, tgt_edges)
     return V_src, L_src, nv_src, V_tgt, L_tgt, nv_tgt
 
 
