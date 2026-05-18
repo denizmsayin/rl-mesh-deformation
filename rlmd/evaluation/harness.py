@@ -62,6 +62,67 @@ def _resolve_device(spec: str) -> torch.device:
     return torch.device(spec)
 
 
+def _deformation_vis_tensors(
+    V_src: torch.Tensor,
+    V_final: torch.Tensor,
+    L_src: torch.Tensor,
+    nv_src: torch.Tensor,
+    V_tgt: torch.Tensor,
+    L_tgt: torch.Tensor,
+    nv_tgt: torch.Tensor,
+    *,
+    max_batch: Optional[int] = None,
+):
+    """Return plot inputs on CPU; optionally keep only the first ``max_batch`` rows."""
+    if max_batch is not None:
+        V_src = V_src[:max_batch]
+        V_final = V_final[:max_batch]
+        L_src = L_src[:max_batch]
+        nv_src = nv_src[:max_batch]
+        V_tgt = V_tgt[:max_batch]
+        L_tgt = L_tgt[:max_batch]
+        nv_tgt = nv_tgt[:max_batch]
+    return (
+        V_src.detach().cpu(),
+        V_final.detach().cpu(),
+        L_src.detach().cpu(),
+        nv_src.detach().cpu(),
+        V_tgt.detach().cpu(),
+        L_tgt.detach().cpu(),
+        nv_tgt.detach().cpu(),
+    )
+
+
+def _write_deformation_batch_figure(
+    V_src: torch.Tensor,
+    V_final: torch.Tensor,
+    L_src: torch.Tensor,
+    nv_src: torch.Tensor,
+    V_tgt: torch.Tensor,
+    L_tgt: torch.Tensor,
+    nv_tgt: torch.Tensor,
+    out_path: str,
+    *,
+    first_index: int,
+    max_batch: Optional[int] = None,
+) -> None:
+    plot_polylines_initial_vs_final(
+        *_deformation_vis_tensors(
+            V_src,
+            V_final,
+            L_src,
+            nv_src,
+            V_tgt,
+            L_tgt,
+            nv_tgt,
+            max_batch=max_batch,
+        ),
+        out_path,
+        title_prefix="sample",
+        first_index=first_index,
+    )
+
+
 def run(cfg: DictConfig) -> str:
     """Run the evaluation harness. Returns the path to the written CSV."""
     device = _resolve_device(cfg.device)
@@ -119,19 +180,38 @@ def run(cfg: DictConfig) -> str:
             if visualize:
                 vis_path = os.path.join(output_dir,
                                         f"deformations_batch_{batch_i:05d}.png")
-                plot_polylines_initial_vs_final(
-                    V_src.detach().cpu(),
-                    V_final.detach().cpu(),
-                    L_src.detach().cpu(),
-                    nv_src.detach().cpu(),
-                    V_tgt.detach().cpu(),
-                    L_tgt.detach().cpu(),
-                    nv_tgt.detach().cpu(),
+                _write_deformation_batch_figure(
+                    V_src,
+                    V_final,
+                    L_src,
+                    nv_src,
+                    V_tgt,
+                    L_tgt,
+                    nv_tgt,
                     vis_path,
-                    title_prefix="sample",
                     first_index=sample_idx,
                 )
                 print(f"wrote visualization {vis_path}")
+
+                B_vis = int(V_src.shape[0])
+                if B_vis > 8:
+                    preview_path = os.path.join(
+                        output_dir,
+                        f"deformations_batch_{batch_i:05d}_first8.png",
+                    )
+                    _write_deformation_batch_figure(
+                        V_src,
+                        V_final,
+                        L_src,
+                        nv_src,
+                        V_tgt,
+                        L_tgt,
+                        nv_tgt,
+                        preview_path,
+                        first_index=sample_idx,
+                        max_batch=8,
+                    )
+                    print(f"wrote visualization {preview_path}")
 
             with torch.no_grad():
                 poly_pred = (V_final, L_src, nv_src)
