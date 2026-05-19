@@ -4,6 +4,7 @@ from .losses import (
     polyline_laplacian_smoothing,
     polyline_normal_consistency,
 )
+from .resample import resample_uniform_polyline
 from .sampling import sample_points_from_polylines
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "polyline_edge_loss",
     "polyline_laplacian_smoothing",
     "polyline_normal_consistency",
+    "resample_uniform_polyline",
     "sample_points_from_polylines",
 ]

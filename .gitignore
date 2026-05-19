@@ -4,6 +4,7 @@ outputs/
 # Locals
 pytorch3d/
 *.png
+*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
