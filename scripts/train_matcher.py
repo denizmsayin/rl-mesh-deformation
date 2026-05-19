@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from rlmd.dataset import shape_collate_fn
-from rlmd.evaluation.matchers import FixedMatcher
+from rlmd.evaluation.matchers import FixedMatcher, Knn3dMatcher, LearnedMatcher
 from rlmd.evaluation.metrics import ChamferMetric
 from rlmd.ops import resample_uniform_polyline
 
@@ -57,6 +57,75 @@ def _cycle(loader):
     while True:
         for batch in loader:
             yield batch
+
+
+def _build_eval_subset(dataset, num_samples, seed):
+    """Deterministic Subset of `dataset` with `num_samples` items (or fewer)."""
+    if num_samples is None or num_samples >= len(dataset):
+        return dataset
+    g = torch.Generator().manual_seed(int(seed))
+    indices = torch.randperm(len(dataset), generator=g)[:int(num_samples)].tolist()
+    return Subset(dataset, indices)
+
+
+def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, device):
+    """Run scenario for each pair, return concatenated per-item rewards (-chamfer_sym).
+
+    NOTE: cannot wrap the scenario call in torch.no_grad() because the scenario's
+    inner SGD requires gradients on `deform`. Both LearnedMatcher and
+    Knn3dMatcher avoid leaking gradients to feature-extractor params (the
+    former wraps its forward in no_grad, the latter has no params). Only the
+    reward Chamfer is wrapped in no_grad here.
+    """
+    rewards = []
+    for batch_src, batch_tgt in zip(batches_src, batches_tgt):
+        V_src, L_src, nv_src, _ = _to_device(batch_src, device)
+        V_tgt, L_tgt, nv_tgt, _ = _to_device(batch_tgt, device)
+        V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
+        V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
+        V_final = scenario.run(
+            (V_src_r, L_src_r, nv_src_r),
+            (V_tgt_r, L_tgt_r, nv_tgt_r),
+            matcher,
+        )
+        with torch.no_grad():
+            out = chamfer((V_final, L_src_r, nv_src_r),
+                          (V_tgt_r, L_tgt_r, nv_tgt_r))
+            rewards.append(-out["chamfer_sym"])
+    return torch.cat(rewards) if rewards else torch.empty(0)
+
+
+def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M, device,
+              compare_to_knn: bool, eval_batch_size: int):
+    """Argmax rollout on a held-out subset; optionally also Knn3dMatcher rollout."""
+    eval_src = _build_eval_subset(ds_src, eval_cfg.get("num_samples"),
+                                  eval_cfg.get("seed_src", 100))
+    eval_tgt = _build_eval_subset(ds_tgt, eval_cfg.get("num_samples"),
+                                  eval_cfg.get("seed_tgt", 101))
+    loader_src = DataLoader(eval_src, batch_size=eval_batch_size, shuffle=False,
+                            num_workers=0, drop_last=False, collate_fn=shape_collate_fn)
+    loader_tgt = DataLoader(eval_tgt, batch_size=eval_batch_size, shuffle=False,
+                            num_workers=0, drop_last=False, collate_fn=shape_collate_fn)
+    batches_src = list(loader_src)
+    batches_tgt = list(loader_tgt)
+
+    feature_extractor.eval()
+    learned = LearnedMatcher(feature_extractor)
+    R_learned = _rollout_reward(learned, scenario, chamfer, batches_src, batches_tgt, M, device)
+    out = {
+        "learned_reward_mean": float(R_learned.mean().item()),
+        "learned_reward_std": float(R_learned.std().item() if R_learned.numel() > 1 else 0.0),
+    }
+    if compare_to_knn:
+        knn = Knn3dMatcher(bidirectional=False)
+        R_knn = _rollout_reward(knn, scenario, chamfer, batches_src, batches_tgt, M, device)
+        out["knn_reward_mean"] = float(R_knn.mean().item())
+        out["knn_reward_std"] = float(R_knn.std().item() if R_knn.numel() > 1 else 0.0)
+    else:
+        out["knn_reward_mean"] = float("nan")
+        out["knn_reward_std"] = float("nan")
+    feature_extractor.train()
+    return out
 
 
 class _Baseline:
@@ -117,8 +186,41 @@ def train(cfg: DictConfig) -> str:
     hydra_cfg = HydraConfig.get()
     output_dir = hydra_cfg.runtime.output_dir
     log_path = os.path.join(output_dir, "train_log.csv")
+    eval_log_path = os.path.join(output_dir, "eval_log.csv")
     ckpt_path = os.path.join(output_dir, "matcher.pt")
     OmegaConf.save(cfg, os.path.join(output_dir, "resolved_config.yaml"), resolve=True)
+
+    eval_cfg = cfg.get("eval", None) or {}
+    eval_every = eval_cfg.get("every_steps", None)
+    eval_every = int(eval_every) if eval_every else None
+    eval_batch_size = int(eval_cfg.get("batch_size", cfg.batch_size))
+    eval_compare_to_knn = bool(eval_cfg.get("compare_to_knn", True))
+
+    eval_logf = open(eval_log_path, "w") if eval_every is not None else None
+    if eval_logf is not None:
+        eval_logf.write(
+            "step,learned_reward_mean,learned_reward_std,"
+            "knn_reward_mean,knn_reward_std\n"
+        )
+
+    def _run_eval(step):
+        if eval_logf is None:
+            return
+        metrics = _evaluate(
+            matcher.feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer,
+            int(cfg.M), device, eval_compare_to_knn, eval_batch_size,
+        )
+        eval_logf.write(
+            f"{step},{metrics['learned_reward_mean']:.6g},"
+            f"{metrics['learned_reward_std']:.6g},"
+            f"{metrics['knn_reward_mean']:.6g},"
+            f"{metrics['knn_reward_std']:.6g}\n"
+        )
+        eval_logf.flush()
+        tqdm.write(
+            f"[eval @ step {step}] learned={metrics['learned_reward_mean']:.4f}"
+            + (f"  knn={metrics['knn_reward_mean']:.4f}" if eval_compare_to_knn else "")
+        )
 
     def _save_checkpoint(step):
         torch.save({
@@ -135,6 +237,8 @@ def train(cfg: DictConfig) -> str:
 
     iter_src = _cycle(loader_src)
     iter_tgt = _cycle(loader_tgt)
+
+    _run_eval(0)
 
     with open(log_path, "w") as logf:
         logf.write("step,reward_mean,reward_std,loss,entropy,baseline\n")
@@ -190,7 +294,15 @@ def train(cfg: DictConfig) -> str:
             if checkpoint_every is not None and step % checkpoint_every == 0:
                 _save_checkpoint(step)
 
+            if eval_every is not None and step % eval_every == 0:
+                _run_eval(step)
+
         _save_checkpoint(num_steps)
+        if eval_every is not None and num_steps % eval_every != 0:
+            _run_eval(num_steps)
+
+    if eval_logf is not None:
+        eval_logf.close()
 
     return ckpt_path
 
