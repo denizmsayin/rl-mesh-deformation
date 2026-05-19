@@ -1,22 +1,23 @@
 defaults:
-  - dataset_src: circle_set
-  - dataset_tgt: any_set
+  - dataset_src: circle_stream
+  - dataset_tgt: shapes_stream
   - matcher: learned_stochastic
   - scenario: sgd_fixed_match
+  # Held-out fixed disk datasets for periodic eval. Package overrides drop the
+  # disk configs under `eval.dataset_src` / `eval.dataset_tgt`.
+  - /dataset_src@eval.dataset_src: circle_set
+  - /dataset_tgt@eval.dataset_tgt: any_set
   - _self_
 
 device: auto
 seed: 0
-# Sample budget seen by the policy (i.e. environment interactions). Internally
-# the script derives num_steps = ceil(total_trajectories / batch_size). Cadence
-# knobs below (eval, checkpoint) stay in gradient steps because they're tied to
-# policy updates, not experience.
+# Sample budget seen by the policy (i.e. environment interactions). The loop
+# iterates until traj >= total_trajectories. Cadence knobs below (eval,
+# checkpoint) stay in gradient steps because they're tied to policy updates,
+# not experience.
 total_trajectories: 160_000
 checkpoint_every_steps: 500   # null disables periodic checkpoints; end-of-run save always happens
 batch_size: 32
-num_workers: 0
-pin_memory: false
-train_num_samples: null   # null = use full intersection of src/tgt sizes
 
 # Uniform-resample target count for the policy / inner SGD.
 M: 128

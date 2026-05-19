@@ -1,0 +1,14 @@
+name: shapes_stream
+source:
+  _target_: rlmd.data.online.OnlineShapeSampler
+  shape_specs:
+    - {shape: circle,   num_points: 60}
+    - {shape: hexagon,  num_points: 60}
+    - {shape: triangle, num_points: 60}
+    - {shape: star,     num_points: 60, n_tips: 5,  inner_radius: 0.45, name: star_5}
+  transform:
+    translation_range: [-1.0, 1.0]
+    scale_range: [0.2, 2.0]
+    rotation_range: [0.0, 360.0]
+    isotropic_scale: false
+  seed: 1

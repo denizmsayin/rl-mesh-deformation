@@ -37,43 +37,6 @@ def _to_device(batch, device):
     return V.to(device), L.to(device), lengths.to(device), shapes
 
 
-def _make_loader(dataset, batch_size, num_workers, pin_memory, shuffle, seed):
-    g = torch.Generator()
-    g.manual_seed(seed)
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        # drop_last must be False: with drop_last=True and len(dataset) < batch_size
-        # the loader produces zero batches per pass and `_cycle` becomes a CPU
-        # spin loop that never yields, hanging the trainer silently.
-        drop_last=False,
-        collate_fn=shape_collate_fn,
-        generator=g,
-    )
-
-
-def _cycle(loader):
-    """Infinite iterator over `loader`; reshuffles each pass via the loader's generator.
-
-    Raises immediately if `loader` produces zero batches per pass, which would
-    otherwise turn this generator into a no-yield spinlock.
-    """
-    yielded_any = False
-    while True:
-        for batch in loader:
-            yielded_any = True
-            yield batch
-        if not yielded_any:
-            raise RuntimeError(
-                "DataLoader yielded zero batches in one full pass; "
-                "len(dataset) < batch_size with drop_last=True? "
-                "Refusing to spin forever."
-            )
-
-
 def _build_eval_subset(dataset, num_samples, seed):
     """Deterministic Subset of `dataset` with `num_samples` items (or fewer)."""
     if num_samples is None or num_samples >= len(dataset):
@@ -170,25 +133,8 @@ def train(cfg: DictConfig) -> str:
     device = _resolve_device(cfg.device)
     torch.manual_seed(cfg.seed)
 
-    ds_src = instantiate(cfg.dataset_src.dataset)
-    ds_tgt = instantiate(cfg.dataset_tgt.dataset)
-    n = min(len(ds_src), len(ds_tgt))
-    if cfg.get("train_num_samples") is not None:
-        n = min(n, int(cfg.train_num_samples))
-    if n < len(ds_src):
-        ds_src = Subset(ds_src, range(n))
-    if n < len(ds_tgt):
-        ds_tgt = Subset(ds_tgt, range(n))
-    if n == 0:
-        raise RuntimeError("src or tgt dataset is empty after capping; nothing to train on.")
-    if n < int(cfg.batch_size):
-        print(f"warning: dataset size {n} < batch_size {int(cfg.batch_size)}; "
-              f"each batch will contain {n} samples (drop_last=False).")
-
-    loader_src = _make_loader(ds_src, cfg.batch_size, cfg.num_workers, cfg.pin_memory,
-                              shuffle=True, seed=cfg.seed)
-    loader_tgt = _make_loader(ds_tgt, cfg.batch_size, cfg.num_workers, cfg.pin_memory,
-                              shuffle=True, seed=cfg.seed + 1)
+    src_source = instantiate(cfg.dataset_src.source)
+    tgt_source = instantiate(cfg.dataset_tgt.source)
 
     matcher = instantiate(cfg.matcher)
     matcher.feature_extractor.to(device)
@@ -222,13 +168,18 @@ def train(cfg: DictConfig) -> str:
             "step,learned_reward_mean,learned_reward_std,"
             "knn_reward_mean,knn_reward_std\n"
         )
+        eval_ds_src = instantiate(cfg.eval.dataset_src.dataset)
+        eval_ds_tgt = instantiate(cfg.eval.dataset_tgt.dataset)
+    else:
+        eval_ds_src = eval_ds_tgt = None
 
     def _run_eval(step):
         if eval_logf is None:
             return
         metrics = _evaluate(
-            matcher.feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer,
-            int(cfg.M), device, eval_compare_to_knn, eval_batch_size,
+            matcher.feature_extractor, eval_cfg, eval_ds_src, eval_ds_tgt,
+            scenario, chamfer, int(cfg.M), device,
+            eval_compare_to_knn, eval_batch_size,
         )
         eval_logf.write(
             f"{step},{metrics['learned_reward_mean']:.6g},"
@@ -256,8 +207,7 @@ def train(cfg: DictConfig) -> str:
     checkpoint_every = cfg.get("checkpoint_every_steps", None)
     checkpoint_every = int(checkpoint_every) if checkpoint_every else None
 
-    iter_src = _cycle(loader_src)
-    iter_tgt = _cycle(loader_tgt)
+    batch_size = int(cfg.batch_size)
 
     _run_eval(0)
 
@@ -269,18 +219,9 @@ def train(cfg: DictConfig) -> str:
         traj = 0
         while traj < total_trajectories:
             step += 1
-            batch_src = next(iter_src)
-            batch_tgt = next(iter_tgt)
-            V_src, L_src, nv_src, _ = _to_device(batch_src, device)
-            V_tgt, L_tgt, nv_tgt, _ = _to_device(batch_tgt, device)
-
-            # Defensive: src/tgt may have diverging schedules if datasets differ
-            # in length; trim to the min of this step's actual batch sizes.
-            B = min(V_src.shape[0], V_tgt.shape[0])
-            if B < V_src.shape[0]:
-                V_src, L_src, nv_src = V_src[:B], L_src[:B], nv_src[:B]
-            if B < V_tgt.shape[0]:
-                V_tgt, L_tgt, nv_tgt = V_tgt[:B], L_tgt[:B], nv_tgt[:B]
+            V_src, L_src, nv_src, _ = src_source.next_batch(batch_size, device)
+            V_tgt, L_tgt, nv_tgt, _ = tgt_source.next_batch(batch_size, device)
+            B = V_src.shape[0]
             traj += B
 
             V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(
