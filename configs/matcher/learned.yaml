@@ -1,0 +1,9 @@
+_target_: rlmd.evaluation.matchers.LearnedMatcher
+feature_extractor:
+  _target_: rlmd.models.PolygonCNN
+  in_channels: 2
+  hidden_channels: [64, 64, 128]
+  out_channels: 128
+  kernel_size: 5
+  layernorm: true
+temperature: 1.0
