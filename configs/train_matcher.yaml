@@ -7,7 +7,11 @@ defaults:
 
 device: auto
 seed: 0
-num_steps: 5000
+# Sample budget seen by the policy (i.e. environment interactions). Internally
+# the script derives num_steps = ceil(total_trajectories / batch_size). Cadence
+# knobs below (eval, checkpoint) stay in gradient steps because they're tied to
+# policy updates, not experience.
+total_trajectories: 160_000
 checkpoint_every_steps: 500   # null disables periodic checkpoints; end-of-run save always happens
 batch_size: 32
 num_workers: 0

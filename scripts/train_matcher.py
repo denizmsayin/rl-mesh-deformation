@@ -231,7 +231,10 @@ def train(cfg: DictConfig) -> str:
             "config": OmegaConf.to_container(cfg, resolve=True),
         }, ckpt_path)
 
-    num_steps = int(cfg.num_steps)
+    batch_size = int(cfg.batch_size)
+    total_trajectories = int(cfg.total_trajectories)
+    num_steps = (total_trajectories + batch_size - 1) // batch_size
+
     checkpoint_every = cfg.get("checkpoint_every_steps", None)
     checkpoint_every = int(checkpoint_every) if checkpoint_every else None
 
@@ -241,10 +244,11 @@ def train(cfg: DictConfig) -> str:
     _run_eval(0)
 
     with open(log_path, "w") as logf:
-        logf.write("step,reward_mean,reward_std,loss,entropy,baseline\n")
+        logf.write("step,traj,reward_mean,reward_std,loss,entropy,baseline\n")
 
-        pbar = tqdm(range(1, num_steps + 1), desc="train")
-        for step in pbar:
+        pbar = tqdm(total=num_steps * batch_size, desc="train", unit="traj")
+        for step in range(1, num_steps + 1):
+            traj = step * batch_size
             batch_src = next(iter_src)
             batch_tgt = next(iter_tgt)
             V_src, L_src, nv_src, _ = _to_device(batch_src, device)
@@ -278,13 +282,14 @@ def train(cfg: DictConfig) -> str:
             optimizer.step()
 
             logf.write(
-                f"{step},"
+                f"{step},{traj},"
                 f"{R.mean().item():.6g},{R.std().item():.6g},"
                 f"{loss.item():.6g},{entropy.mean().item():.6g},"
                 f"{b[0].item():.6g}\n"
             )
             logf.flush()
 
+            pbar.update(batch_size)
             pbar.set_postfix({
                 "R": f"{R.mean().item():.4f}",
                 "ent": f"{entropy.mean().item():.3f}",
@@ -296,6 +301,8 @@ def train(cfg: DictConfig) -> str:
 
             if eval_every is not None and step % eval_every == 0:
                 _run_eval(step)
+
+        pbar.close()
 
         _save_checkpoint(num_steps)
         if eval_every is not None and num_steps % eval_every != 0:
