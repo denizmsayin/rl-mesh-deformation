@@ -19,30 +19,57 @@ the bottom.
   exists today. A learned matcher that returns the same `List[Matching]` will
   drop into the existing harness with zero changes at eval time.
 
-## The three coupled design axes
+## Why one-step is not a useful regime
 
-These choices aren't independent — pick one and the rest narrows down.
+Quick literature / intuition check, since the proposal mentions a one-step
+proxy and Deniz's Chamfer experiments suggest it doesn't actually fit
+anything:
 
-### 1. Match frequency
+- Chamfer / NN-matching gradients form a *velocity field*, not a target
+  field. After one step toward `V_tgt[C]` you either overshoot or collapse
+  many sources onto one target. Iteration is intrinsic — Voxel2Mesh /
+  Pixel2Mesh / AtlasNet / MeshSDF all use multi-step residual deformation
+  with regularizers active throughout.
+- Regularization is local — Laplacian smoothing propagates one ring per
+  step, so corners/details need O(N) iterations to develop.
+- The matching's value shows up across the trajectory, not at one step. A
+  one-step reward throws away the only mechanism by which the matching
+  could help.
 
-| | episode = | actions per ep | credit assignment | proposal stage |
-|---|---|---|---|---|
-| **A. Match-once + one-step move** | 1 step | M (vertices) | trivial — single action vector | one-step proxy |
-| **B. Match-once + frozen-match SGD** | full SGD with fixed Cₜ | M | terminal reward, still 1 action | bridge to multi-step |
-| **C. Re-match every K iters** | T/K steps | M·(T/K) | discounted / GAE | true RL |
+Conclusion: drop Stage A. The one-step formulation survives only as a
+gradient-flow smoke test, not a real regime.
 
-A → B → C, gated on results. C as Stage 1 will drown in variance.
+## Two stages
 
-Important nuance for B: the data term during SGD must be the fixed-pair loss
-`‖V[i] − V_tgt[Cᵢ]‖²`, **not** Chamfer recomputed each iter. Otherwise the
-policy only sets the initial conditions for an optimizer that ignores it
-afterwards, and there is almost no signal.
+### Stage 1 — Match-once + frozen-match SGD
 
-Open question (raised by Deniz): is Stage A meaningful at all? Chamfer
-experiments suggest one step is insufficient to reach any reasonable shape.
-See the discussion section.
+- Sample matches once at t=0 from the learned policy.
+- Inner SGD runs for `num_iters` with the **fixed** correspondences as the
+  data term: `‖P_t[Cᵢ_src] − P_t_tgt[Cᵢ_tgt]‖²`, plus existing edge /
+  Laplacian / normal-consistency regularizers.
+- Reward at end of trajectory, single REINFORCE update.
 
-### 2. Reward
+Important: the data term must be the fixed-pair loss, **not** Chamfer
+recomputed each iter. Otherwise the policy only sets initial conditions for
+an optimizer that ignores it afterwards.
+
+Cost note: Deniz's Chamfer experiments need ~1000+ iters for a reasonable
+fit. Two mitigations:
+
+- **Train on a shorter horizon (~200 iters) than we evaluate on (~1000+).**
+  The matching's value is most visible in the early-to-mid trajectory; once
+  SGD has run 1000 iters it has often masked out poor initial matches
+  anyway.
+- Large batch (B ≥ 128) on GPU. Inner SGD has no policy gradients flowing
+  through it (matches are fixed indices), so it's a deterministic batched
+  ODE — cheap per-step but amortizes well.
+
+### Stage 2 — Re-match every K iters
+
+Multi-step RL. K ≈ 20–50 keeps the trajectory short enough for REINFORCE
+without GAE. Only attempted if Stage 1 shows a positive signal.
+
+### Reward
 
 Candidates:
 
@@ -63,13 +90,34 @@ Candidates:
 Starting recommendation: cached NN-baseline advantage + entropy bonus.
 Optional supervised pretraining for variance reduction.
 
-### 3. Action structure
+### Action structure
 
-DISK-style: S = F_src · F_tgtᵀ / τ → (B, M, N). For each source vertex i,
+DISK-style: S = F_src · F_tgtᵀ / τ → (B, M, N). For each source point i,
 sample j ∼ Cat(softmax(S[i,·])). Joint log-prob = Σᵢ log π(jᵢ|i). Argmax at
 eval.
 
-Variants:
+Match space: **grid-sampled points along arc length** (not vertices, not
+random samples).
+
+- Vertex-only fails on shapes with very few vertices (e.g. stars with sharp
+  corners). Sampling equalizes point counts across shapes.
+- Random sampling injects noise into the action distribution every iter
+  (different sampled points → different features → different optimal
+  matches), fighting the policy. Deterministic uniform arc-length sampling
+  gives the policy a stable point cloud.
+- The action space is then **grid index → grid index**, which stays
+  meaningful across inner-SGD iterations even as V moves, because the
+  parameterization is arc-length on whichever V is current.
+
+Feature extraction:
+
+- Run PolygonCNN on **vertices** (where the topology / circular conv
+  lives).
+- Interpolate features to grid points via segment-linear interpolation.
+- Do not run a separate point-cloud net on the grid points — loses
+  topology.
+
+Variants still open:
 
 - Unidirectional vs bidirectional (matches existing bidirectional Chamfer).
 - Subsample K << M anchors per pair (proposal: "subset of matches as control
@@ -100,27 +148,12 @@ Variants:
 - The proposal's "300+ episodes/sec on CPU" target only holds for Stage A.
   Stage B amortizes only with large batch (B ≥ 64).
 
-## Open: is Stage A viable?
-
-Deniz's Chamfer experiments suggest a single deformation step cannot reach a
-reasonable shape, which makes a one-step reward both noisy and uninformative.
-Possible adjustments:
-
-- Reframe "one step" as **N closed-form line-pulls** with a small step size
-  per matched pair, plus K Laplacian smoothing sweeps — still no SGD, but more
-  than a single move. Cheap and deterministic given C.
-- Skip A entirely and start with B, but cap `num_iters` (e.g. 100–300) to keep
-  episodes fast. This is what Deniz's Chamfer baselines effectively assume.
-- Hybrid: A's deformation operator = one gradient descent step on the
-  fixed-match data term + regularizers, large lr. Gives a single-step
-  trajectory but uses the same machinery as B.
-
 ## Decisions still open
 
-1. Starting stage: A (one-step), B (frozen-match SGD), or both.
-2. Reward: cached NN-baseline advantage / plain neg Chamfer / normalized
+1. Reward: cached NN-baseline advantage / plain neg Chamfer / normalized
    improvement.
-3. Pretrain with parametric ground-truth correspondences (yes/no).
-4. Action sampling: all M unidirectional / all M bidirectional / K anchors.
-5. (New, from this discussion) What deformation operator do we use in Stage A
-   if we keep A at all?
+2. Pretrain with parametric ground-truth correspondences (yes/no).
+3. Action sampling: all M unidirectional / all M bidirectional / K anchors.
+4. Training horizon vs eval horizon (proposed: 200 vs 1000+).
+5. Number of grid-sampled points M (proposed: 64 or 128, matching current
+   `num_samples=500` may be overkill for the action space).
