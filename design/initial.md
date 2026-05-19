@@ -54,12 +54,14 @@ recomputed each iter. Otherwise the policy only sets initial conditions for
 an optimizer that ignores it afterwards.
 
 Cost note: Deniz's Chamfer experiments need ~1000+ iters for a reasonable
-fit. Two mitigations:
+fit.
 
-- **Train on a shorter horizon (~200 iters) than we evaluate on (~1000+).**
-  The matching's value is most visible in the early-to-mid trajectory; once
-  SGD has run 1000 iters it has often masked out poor initial matches
-  anyway.
+- Make `num_iters_train` and `num_iters_eval` separate config knobs.
+- **Start with both equal** for simplicity (no proxy / eval gap to reason
+  about).
+- Once Stage 1 works, we may train on a shorter horizon (~100–200) than we
+  eval on, since the matching's value is most visible early in the
+  trajectory.
 - Large batch (B ≥ 128) on GPU. Inner SGD has no policy gradients flowing
   through it (matches are fixed indices), so it's a deterministic batched
   ODE — cheap per-step but amortizes well.
@@ -71,57 +73,60 @@ without GAE. Only attempted if Stage 1 shows a positive signal.
 
 ### Reward
 
-Candidates:
+**Start with: R = −Chamfer(V_final, V_tgt)** with an EMA scalar baseline for
+variance reduction. Chamfer is fine as a *scalar reward* even though it's a
+bad continuous gradient — gradients only flow through log π, not through
+Chamfer's NN matching.
 
-- **R = −Chamfer(V_final, V_tgt)**. Direct. Chamfer is fine as a *scalar
-  reward* even though it is a bad continuous gradient — gradients only flow
-  through log π.
-- **R = Chamfer_NN_baseline − Chamfer_policy**. "Did the learned matcher beat
-  NN on this pair?" Centers the advantage near zero. Baseline can be
-  **precomputed offline** over the dataset and cached.
+Future plans (not Stage 1):
+
+- **Cached NN-baseline advantage**: R = Chamfer_NN − Chamfer_policy with the
+  NN-rollout Chamfer precomputed offline per (src, tgt) pair. Centers
+  advantage near zero. Add once Stage 1 is stable to reduce variance further.
 - **Normalized improvement**: (Chamfer_init − Chamfer_final) / Chamfer_init.
   Scale-invariant across hard/easy pairs.
-- **Ground-truth correspondence supervised loss** (warm-start, not RL). Our
-  procedural shapes are parameterized, so the "ideal" correspondence is often
-  known (arc-length / angle).
 - **Shape-quality augmentation**: add normal-consistency / self-intersection
-  count to the reward to discourage collapse.
-
-Starting recommendation: cached NN-baseline advantage + entropy bonus.
-Optional supervised pretraining for variance reduction.
+  count to discourage collapse.
+- **Ground-truth correspondence supervised loss** as a warm-start.
 
 ### Action structure
 
-DISK-style: S = F_src · F_tgtᵀ / τ → (B, M, N). For each source point i,
+DISK-style: S = F_src · F_tgtᵀ / τ → (B, M, M). For each source point i,
 sample j ∼ Cat(softmax(S[i,·])). Joint log-prob = Σᵢ log π(jᵢ|i). Argmax at
 eval.
 
-Match space: **grid-sampled points along arc length** (not vertices, not
-random samples).
+**Uniform resampling to a new polyline.** Rather than sampling points off
+the original variable-vertex polyline, resample each shape *once per
+episode* to a uniform-stride, fixed-count polyline with M vertices spaced
+equally along arc length. Treat that as the actual source/target mesh from
+then on.
 
-- Vertex-only fails on shapes with very few vertices (e.g. stars with sharp
-  corners). Sampling equalizes point counts across shapes.
-- Random sampling injects noise into the action distribution every iter
-  (different sampled points → different features → different optimal
-  matches), fighting the policy. Deterministic uniform arc-length sampling
-  gives the policy a stable point cloud.
-- The action space is then **grid index → grid index**, which stays
-  meaningful across inner-SGD iterations even as V moves, because the
-  parameterization is arc-length on whichever V is current.
+Consequences:
 
-Feature extraction:
+- Action space is exactly **M × M** vertex-to-vertex matching.
+- PolygonCNN feeds directly on the resampled polyline — no feature
+  interpolation needed.
+- The CNN's receptive field covers a constant arc-length per kernel
+  position across all shapes, which makes the convolution semantically
+  consistent.
+- The inner SGD optimizes the resampled V (not the original variable-vertex
+  V).
+- Eval Chamfer can still sample further from the optimized polyline; that
+  stays the existing harness behaviour.
+- A possible loss is fine resolution on sharp corners (stars). Mitigation:
+  M large enough that arc-length resolution > corner scale; in practice
+  M ∈ {64, 128} should suffice for our procedural shapes.
 
-- Run PolygonCNN on **vertices** (where the topology / circular conv
-  lives).
-- Interpolate features to grid points via segment-linear interpolation.
-- Do not run a separate point-cloud net on the grid points — loses
-  topology.
+Implementation: a `resample_uniform_polyline(V, L, num_verts, M)` op,
+applied either as a dataset transform or at episode reset. Dataset
+transform is cleaner because then `num_verts` is constant and
+batching/padding is trivial.
 
 Variants still open:
 
-- Unidirectional vs bidirectional (matches existing bidirectional Chamfer).
-- Subsample K << M anchors per pair (proposal: "subset of matches as control
-  points").
+- Unidirectional vs bidirectional matching.
+- Subsample K << M anchors per pair (proposal: "subset of matches as
+  control points").
 - Entropy regularization with schedulable temperature τ.
 
 ## Architecture sketch
@@ -148,12 +153,21 @@ Variants still open:
 - The proposal's "300+ episodes/sec on CPU" target only holds for Stage A.
   Stage B amortizes only with large batch (B ≥ 64).
 
+## Decisions made
+
+- **Reward**: plain negative final Chamfer + EMA scalar baseline.
+- **Horizons**: configurable `num_iters_train` / `num_iters_eval`; start
+  equal.
+- **Point representation**: resample to uniform-stride M-vertex polyline,
+  used as the actual source/target mesh.
+- **M**: configurable, default **128**.
+- **No supervised pretrain.** Pure RL from scratch — the experimental
+  question is whether RL works at all on this setup, not whether it beats
+  arc-length-parameterization-with-extra-help.
+
 ## Decisions still open
 
-1. Reward: cached NN-baseline advantage / plain neg Chamfer / normalized
-   improvement.
-2. Pretrain with parametric ground-truth correspondences (yes/no).
-3. Action sampling: all M unidirectional / all M bidirectional / K anchors.
-4. Training horizon vs eval horizon (proposed: 200 vs 1000+).
-5. Number of grid-sampled points M (proposed: 64 or 128, matching current
-   `num_samples=500` may be overkill for the action space).
+1. Action sampling: independent per-row softmax sampling vs enforced
+   one-to-one (Plackett-Luce / sequential sampling without replacement).
+   See discussion below.
+2. Unidirectional vs bidirectional matching.
