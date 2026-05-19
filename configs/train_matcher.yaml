@@ -1,0 +1,38 @@
+defaults:
+  - dataset_src: circle_set
+  - dataset_tgt: any_set
+  - matcher: learned_stochastic
+  - scenario: sgd_fixed_match
+  - _self_
+
+device: auto
+seed: 0
+num_epochs: 5
+batch_size: 32
+num_workers: 0
+pin_memory: false
+train_num_samples: null   # null = use full intersection of src/tgt sizes
+
+# Uniform-resample target count for the policy / inner SGD.
+M: 128
+
+# REINFORCE
+entropy_coef: 0.01
+
+# Baseline: type ∈ {none, ema}. EMA uses scalar running mean of batch rewards.
+baseline:
+  type: ema
+  momentum: 0.99
+
+# Number of points to sample from each polyline for the reward Chamfer.
+reward_num_samples: 1024
+
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 1.0e-4
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/train_matcher/${now:%Y-%m-%d}/${now:%H-%M-%S}
