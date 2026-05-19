@@ -7,3 +7,7 @@ feature_extractor:
   kernel_size: 5
   layernorm: true
 temperature: 1.0
+# Path to a checkpoint produced by scripts/train_matcher.py. Override at the
+# CLI: matcher.checkpoint_path=outputs/.../matcher.pt
+checkpoint_path: null
+override_temperature: false

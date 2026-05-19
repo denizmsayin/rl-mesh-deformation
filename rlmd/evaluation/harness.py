@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from rlmd.dataset import shape_collate_fn
+from rlmd.ops import resample_uniform_polyline
 from rlmd.visualization.visualize import plot_polylines_initial_vs_final
 
 
@@ -159,6 +160,9 @@ def run(cfg: DictConfig) -> str:
 
     sample_idx = 0
     visualize = bool(cfg.get("visualize_deformations", False))
+    resample_M = cfg.get("resample_M", None)
+    if resample_M is not None:
+        resample_M = int(resample_M)
     with open(output_csv, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
@@ -170,6 +174,12 @@ def run(cfg: DictConfig) -> str:
                 desc="harness"):
             V_src, L_src, nv_src, shapes_src = _to_device(batch_src, device)
             V_tgt, L_tgt, nv_tgt, shapes_tgt = _to_device(batch_tgt, device)
+
+            if resample_M is not None:
+                V_src, L_src, nv_src = resample_uniform_polyline(
+                    V_src, L_src, nv_src, resample_M)
+                V_tgt, L_tgt, nv_tgt = resample_uniform_polyline(
+                    V_tgt, L_tgt, nv_tgt, resample_M)
 
             V_final = scenario.run(
                 (V_src, L_src, nv_src),

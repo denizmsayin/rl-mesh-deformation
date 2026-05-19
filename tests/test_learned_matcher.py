@@ -161,3 +161,52 @@ def test_fixed_matcher_returns_stored():
     fixed = FixedMatcher([m])
     out = fixed(None, None, None, None)  # args ignored
     assert out[0] is m
+
+
+def test_learned_matcher_loads_checkpoint(tmp_path):
+    # Train-time matcher with non-trivial weights.
+    src_model = PolygonCNN(in_channels=2, hidden_channels=(8, 8),
+                           out_channels=16, kernel_size=5, layernorm=True)
+    for p in src_model.parameters():
+        p.data.normal_(mean=0.3, std=0.5)
+
+    ckpt = tmp_path / "matcher.pt"
+    torch.save({
+        "feature_extractor_state_dict": src_model.state_dict(),
+        "temperature": 0.7,
+        "M": 24,
+    }, ckpt)
+
+    # Fresh matcher with a freshly initialized extractor, then load.
+    tgt_model = PolygonCNN(in_channels=2, hidden_channels=(8, 8),
+                           out_channels=16, kernel_size=5, layernorm=True)
+    matcher = LearnedMatcher(tgt_model, temperature=1.0, checkpoint_path=str(ckpt))
+
+    # State_dict matches.
+    for k, v in src_model.state_dict().items():
+        torch.testing.assert_close(matcher.feature_extractor.state_dict()[k], v)
+
+    # Temperature pulled from checkpoint.
+    assert matcher.temperature == 0.7
+
+    # And actually produces argmax matches that agree with a hand-built peer.
+    M = 24
+    Vs, ns, Vt, nt = _resample_pair(_circle(10), _circle(14), M)
+    peer = LearnedMatcher(src_model, temperature=0.7)
+    out_loaded = matcher(Vs, ns, Vt, nt)
+    out_peer = peer(Vs, ns, Vt, nt)
+    assert torch.equal(out_loaded[0].idx_tgt, out_peer[0].idx_tgt)
+
+
+def test_learned_matcher_override_temperature(tmp_path):
+    src_model = PolygonCNN(in_channels=2, hidden_channels=(8,),
+                           out_channels=8, kernel_size=5, layernorm=False)
+    ckpt = tmp_path / "matcher.pt"
+    torch.save({"feature_extractor_state_dict": src_model.state_dict(),
+                "temperature": 0.5}, ckpt)
+
+    tgt_model = PolygonCNN(in_channels=2, hidden_channels=(8,),
+                           out_channels=8, kernel_size=5, layernorm=False)
+    matcher = LearnedMatcher(tgt_model, temperature=2.0, checkpoint_path=str(ckpt),
+                             override_temperature=True)
+    assert matcher.temperature == 2.0

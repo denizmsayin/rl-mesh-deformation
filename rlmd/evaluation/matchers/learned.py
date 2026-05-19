@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -89,13 +89,31 @@ class LearnedMatcher:
     Deterministic argmax wrapper around a feature extractor. Conforms to the
     existing Matcher protocol (returns List[Matching]) so it slots into
     scenarios and the harness eval path unchanged.
+
+    When ``checkpoint_path`` is given, the feature extractor's weights are
+    loaded from a checkpoint produced by ``scripts/train_matcher.py``
+    (key ``feature_extractor_state_dict``). The stored ``temperature``, if
+    present, overrides the ``temperature`` kwarg unless
+    ``override_temperature=True``.
     """
 
     name = "learned"
 
-    def __init__(self, feature_extractor, temperature: float = 1.0):
+    def __init__(
+        self,
+        feature_extractor,
+        temperature: float = 1.0,
+        checkpoint_path: Optional[str] = None,
+        override_temperature: bool = False,
+    ):
         self.feature_extractor = feature_extractor
         self.temperature = float(temperature)
+        if checkpoint_path is not None:
+            ck = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+            self.feature_extractor.load_state_dict(ck["feature_extractor_state_dict"])
+            if "temperature" in ck and not override_temperature:
+                self.temperature = float(ck["temperature"])
+        self.feature_extractor.eval()
 
     def __call__(self, V_src, n_src, V_tgt, n_tgt) -> List[Matching]:
         with torch.no_grad():
