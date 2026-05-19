@@ -2,6 +2,7 @@
 outputs/
 
 # Locals
+runs/
 pytorch3d/
 *.png
 *.pdf

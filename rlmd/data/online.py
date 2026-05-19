@@ -1,4 +1,3 @@
-import random
 from dataclasses import dataclass
 from typing import List
 
@@ -17,6 +16,10 @@ class OnlineShapeSampler:
     fixed on-disk corpus. Each batch is homogeneous (one shape type) and the
     shape type is drawn uniformly at random across calls.
 
+    A single `torch.Generator` drives both the shape-spec choice and the
+    per-batch integer seed handed to the backend, so reproducibility is just
+    "set `seed` to the same value".
+
     Args:
         shape_specs: list of dicts. Each must have `shape` (one of the
             generator's registered keys) and optionally `num_points`, plus any
@@ -24,9 +27,7 @@ class OnlineShapeSampler:
             for logging.
         transform: dict with `translation_range`, `scale_range`,
             `rotation_range` (each a 2-tuple), and optional `isotropic_scale`.
-        seed: master seed; the shape-choice RNG is seeded here, and each
-            generated batch uses a fresh derived seed so successive calls
-            produce different transforms.
+        seed: master seed for the internal torch.Generator.
     """
     shape_specs: List[dict]
     transform: dict
@@ -34,15 +35,17 @@ class OnlineShapeSampler:
 
     def __post_init__(self):
         self._gen = ShapeGenerator()
-        self._rng = random.Random(int(self.seed))
-        self._batch_counter = 0
+        # CPU generator: only used for drawing small Python ints (spec choice
+        # and the int seed forwarded to generate_batch_torch). Device-side
+        # randomness for the actual transforms is owned by the backend.
+        self._rng = torch.Generator(device="cpu")
+        self._rng.manual_seed(int(self.seed))
 
     def next_batch(self, batch_size, device, dtype=torch.float32):
-        spec = dict(self._rng.choice(self.shape_specs))
+        spec_idx = int(torch.randint(0, len(self.shape_specs), (), generator=self._rng).item())
+        spec = dict(self.shape_specs[spec_idx])
         name = spec.get("name", spec["shape"])
-
-        self._batch_counter += 1
-        batch_seed = int(self.seed) * 1_000_003 + self._batch_counter
+        batch_seed = int(torch.randint(0, 2**31 - 1, (), generator=self._rng).item())
 
         batch = self._gen.generate_batch_torch(
             instance_name=name,

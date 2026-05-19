@@ -26,11 +26,11 @@ M: 128
 entropy_coef: 0.01
 
 # Baseline: type ∈ {none, ema}. EMA uses scalar running mean of batch rewards.
-baseline:
-  type: none
 # baseline:
-#   type: ema
-#   momentum: 0.99
+#   type: none
+baseline:
+  type: ema
+  momentum: 0.99
 
 # Number of points to sample from each polyline for the reward Chamfer.
 reward_num_samples: 1024
