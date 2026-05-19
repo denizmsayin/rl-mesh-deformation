@@ -46,17 +46,32 @@ def _make_loader(dataset, batch_size, num_workers, pin_memory, shuffle, seed):
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        drop_last=True,
+        # drop_last must be False: with drop_last=True and len(dataset) < batch_size
+        # the loader produces zero batches per pass and `_cycle` becomes a CPU
+        # spin loop that never yields, hanging the trainer silently.
+        drop_last=False,
         collate_fn=shape_collate_fn,
         generator=g,
     )
 
 
 def _cycle(loader):
-    """Infinite iterator over `loader`; reshuffles each pass via the loader's generator."""
+    """Infinite iterator over `loader`; reshuffles each pass via the loader's generator.
+
+    Raises immediately if `loader` produces zero batches per pass, which would
+    otherwise turn this generator into a no-yield spinlock.
+    """
+    yielded_any = False
     while True:
         for batch in loader:
+            yielded_any = True
             yield batch
+        if not yielded_any:
+            raise RuntimeError(
+                "DataLoader yielded zero batches in one full pass; "
+                "len(dataset) < batch_size with drop_last=True? "
+                "Refusing to spin forever."
+            )
 
 
 def _build_eval_subset(dataset, num_samples, seed):
@@ -164,6 +179,11 @@ def train(cfg: DictConfig) -> str:
         ds_src = Subset(ds_src, range(n))
     if n < len(ds_tgt):
         ds_tgt = Subset(ds_tgt, range(n))
+    if n == 0:
+        raise RuntimeError("src or tgt dataset is empty after capping; nothing to train on.")
+    if n < int(cfg.batch_size):
+        print(f"warning: dataset size {n} < batch_size {int(cfg.batch_size)}; "
+              f"each batch will contain {n} samples (drop_last=False).")
 
     loader_src = _make_loader(ds_src, cfg.batch_size, cfg.num_workers, cfg.pin_memory,
                               shuffle=True, seed=cfg.seed)
@@ -231,9 +251,7 @@ def train(cfg: DictConfig) -> str:
             "config": OmegaConf.to_container(cfg, resolve=True),
         }, ckpt_path)
 
-    batch_size = int(cfg.batch_size)
     total_trajectories = int(cfg.total_trajectories)
-    num_steps = (total_trajectories + batch_size - 1) // batch_size
 
     checkpoint_every = cfg.get("checkpoint_every_steps", None)
     checkpoint_every = int(checkpoint_every) if checkpoint_every else None
@@ -246,13 +264,24 @@ def train(cfg: DictConfig) -> str:
     with open(log_path, "w") as logf:
         logf.write("step,traj,reward_mean,reward_std,loss,entropy,baseline\n")
 
-        pbar = tqdm(total=num_steps * batch_size, desc="train", unit="traj")
-        for step in range(1, num_steps + 1):
-            traj = step * batch_size
+        pbar = tqdm(total=total_trajectories, desc="train", unit="traj")
+        step = 0
+        traj = 0
+        while traj < total_trajectories:
+            step += 1
             batch_src = next(iter_src)
             batch_tgt = next(iter_tgt)
             V_src, L_src, nv_src, _ = _to_device(batch_src, device)
             V_tgt, L_tgt, nv_tgt, _ = _to_device(batch_tgt, device)
+
+            # Defensive: src/tgt may have diverging schedules if datasets differ
+            # in length; trim to the min of this step's actual batch sizes.
+            B = min(V_src.shape[0], V_tgt.shape[0])
+            if B < V_src.shape[0]:
+                V_src, L_src, nv_src = V_src[:B], L_src[:B], nv_src[:B]
+            if B < V_tgt.shape[0]:
+                V_tgt, L_tgt, nv_tgt = V_tgt[:B], L_tgt[:B], nv_tgt[:B]
+            traj += B
 
             V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(
                 V_src, L_src, nv_src, int(cfg.M))
@@ -289,7 +318,7 @@ def train(cfg: DictConfig) -> str:
             )
             logf.flush()
 
-            pbar.update(batch_size)
+            pbar.update(B)
             pbar.set_postfix({
                 "R": f"{R.mean().item():.4f}",
                 "ent": f"{entropy.mean().item():.3f}",
@@ -304,9 +333,9 @@ def train(cfg: DictConfig) -> str:
 
         pbar.close()
 
-        _save_checkpoint(num_steps)
-        if eval_every is not None and num_steps % eval_every != 0:
-            _run_eval(num_steps)
+        _save_checkpoint(step)
+        if eval_every is not None and step % eval_every != 0:
+            _run_eval(step)
 
     if eval_logf is not None:
         eval_logf.close()
