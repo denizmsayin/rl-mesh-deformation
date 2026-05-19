@@ -7,7 +7,8 @@ defaults:
 
 device: auto
 seed: 0
-num_epochs: 5
+num_steps: 5000
+checkpoint_every_steps: 500   # null disables periodic checkpoints; end-of-run save always happens
 batch_size: 32
 num_workers: 0
 pin_memory: false

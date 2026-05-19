@@ -52,6 +52,13 @@ def _make_loader(dataset, batch_size, num_workers, pin_memory, shuffle, seed):
     )
 
 
+def _cycle(loader):
+    """Infinite iterator over `loader`; reshuffles each pass via the loader's generator."""
+    while True:
+        for batch in loader:
+            yield batch
+
+
 class _Baseline:
     """Scalar baseline applied to (B,) rewards. Supported types: 'none', 'ema'."""
 
@@ -113,67 +120,77 @@ def train(cfg: DictConfig) -> str:
     ckpt_path = os.path.join(output_dir, "matcher.pt")
     OmegaConf.save(cfg, os.path.join(output_dir, "resolved_config.yaml"), resolve=True)
 
-    step = 0
+    def _save_checkpoint(step):
+        torch.save({
+            "feature_extractor_state_dict": matcher.feature_extractor.state_dict(),
+            "temperature": matcher.temperature,
+            "M": int(cfg.M),
+            "step": step,
+            "config": OmegaConf.to_container(cfg, resolve=True),
+        }, ckpt_path)
+
+    num_steps = int(cfg.num_steps)
+    checkpoint_every = cfg.get("checkpoint_every_steps", None)
+    checkpoint_every = int(checkpoint_every) if checkpoint_every else None
+
+    iter_src = _cycle(loader_src)
+    iter_tgt = _cycle(loader_tgt)
+
     with open(log_path, "w") as logf:
-        logf.write("step,epoch,batch,reward_mean,reward_std,loss,entropy,baseline\n")
+        logf.write("step,reward_mean,reward_std,loss,entropy,baseline\n")
 
-        for epoch in range(int(cfg.num_epochs)):
-            n_batches = min(len(loader_src), len(loader_tgt))
-            iterator = tqdm(enumerate(zip(loader_src, loader_tgt)),
-                            total=n_batches,
-                            desc=f"epoch {epoch+1}/{cfg.num_epochs}")
-            for batch_i, (batch_src, batch_tgt) in iterator:
-                V_src, L_src, nv_src, _ = _to_device(batch_src, device)
-                V_tgt, L_tgt, nv_tgt, _ = _to_device(batch_tgt, device)
+        pbar = tqdm(range(1, num_steps + 1), desc="train")
+        for step in pbar:
+            batch_src = next(iter_src)
+            batch_tgt = next(iter_tgt)
+            V_src, L_src, nv_src, _ = _to_device(batch_src, device)
+            V_tgt, L_tgt, nv_tgt, _ = _to_device(batch_tgt, device)
 
-                V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(
-                    V_src, L_src, nv_src, int(cfg.M))
-                V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(
-                    V_tgt, L_tgt, nv_tgt, int(cfg.M))
+            V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(
+                V_src, L_src, nv_src, int(cfg.M))
+            V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(
+                V_tgt, L_tgt, nv_tgt, int(cfg.M))
 
-                matchings, log_prob, entropy = matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
+            matchings, log_prob, entropy = matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
 
-                V_final = scenario.run(
-                    (V_src_r, L_src_r, nv_src_r),
-                    (V_tgt_r, L_tgt_r, nv_tgt_r),
-                    FixedMatcher(matchings),
-                )
+            V_final = scenario.run(
+                (V_src_r, L_src_r, nv_src_r),
+                (V_tgt_r, L_tgt_r, nv_tgt_r),
+                FixedMatcher(matchings),
+            )
 
-                with torch.no_grad():
-                    out = chamfer((V_final, L_src_r, nv_src_r),
-                                  (V_tgt_r, L_tgt_r, nv_tgt_r))
-                    R = -out["chamfer_sym"]                       # (B,)
-                    b = baseline(R)                                # (B,)
-                    advantage = R - b
+            with torch.no_grad():
+                out = chamfer((V_final, L_src_r, nv_src_r),
+                              (V_tgt_r, L_tgt_r, nv_tgt_r))
+                R = -out["chamfer_sym"]                       # (B,)
+                b = baseline(R)                                # (B,)
+                advantage = R - b
 
-                loss = -(advantage.detach() * log_prob).mean() \
-                       - float(cfg.entropy_coef) * entropy.mean()
+            loss = -(advantage.detach() * log_prob).mean() \
+                   - float(cfg.entropy_coef) * entropy.mean()
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-                step += 1
-                logf.write(
-                    f"{step},{epoch},{batch_i},"
-                    f"{R.mean().item():.6g},{R.std().item():.6g},"
-                    f"{loss.item():.6g},{entropy.mean().item():.6g},"
-                    f"{b[0].item():.6g}\n"
-                )
-                logf.flush()
+            logf.write(
+                f"{step},"
+                f"{R.mean().item():.6g},{R.std().item():.6g},"
+                f"{loss.item():.6g},{entropy.mean().item():.6g},"
+                f"{b[0].item():.6g}\n"
+            )
+            logf.flush()
 
-                iterator.set_postfix({
-                    "R": f"{R.mean().item():.4f}",
-                    "ent": f"{entropy.mean().item():.3f}",
-                    "loss": f"{loss.item():.4f}",
-                })
+            pbar.set_postfix({
+                "R": f"{R.mean().item():.4f}",
+                "ent": f"{entropy.mean().item():.3f}",
+                "loss": f"{loss.item():.4f}",
+            })
 
-            torch.save({
-                "feature_extractor_state_dict": matcher.feature_extractor.state_dict(),
-                "temperature": matcher.temperature,
-                "M": int(cfg.M),
-                "config": OmegaConf.to_container(cfg, resolve=True),
-            }, ckpt_path)
+            if checkpoint_every is not None and step % checkpoint_every == 0:
+                _save_checkpoint(step)
+
+        _save_checkpoint(num_steps)
 
     return ckpt_path
 
