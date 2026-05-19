@@ -1,0 +1,10 @@
+_target_: rlmd.evaluation.scenarios.SgdFixedMatchScenario
+name: sgd_fixed_match
+num_iters: 200
+lr: 1e-1
+momentum: 0.9
+w_data: 1.0
+w_edge: 1.0
+w_normal: 0.01
+w_laplacian: 0.1
+distance_p: 2

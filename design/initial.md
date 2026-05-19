@@ -157,10 +157,17 @@ Variants still open:
 
 **Scenario:**
 
-- Tiny edit to `SgdScenario`: add `match_every: int = 1` (1 = current
-  behaviour; `0` = match once at t=0 and reuse for all iters). No new
-  source file. Add `configs/scenario/sgd_fixed_match.yaml` selecting
-  `match_every: 0`.
+- New scenario `rlmd/evaluation/scenarios/sgd_fixed_match.py` →
+  `SgdFixedMatchScenario`. *Vertex-direct, frozen correspondences*: the
+  matcher is called once at t=0 on the polyline vertices, no random point
+  sampling inside the inner SGD, data term is
+  `||V[i] - V_tgt[j]||²` over the M frozen pairs. Regularizers
+  (edge/normal/laplacian) on the M-vertex polyline.
+- We initially tried to flag this onto `SgdScenario` via `match_every=0`
+  but the semantics diverged: the existing scenario is point-sampling
+  based (Chamfer-style); the learning regime is vertex-direct. Splitting
+  is cleaner.
+- `SgdScenario` left unchanged. Config: `configs/scenario/sgd_fixed_match.yaml`.
 
 **Training script:**
 
@@ -233,5 +240,13 @@ Scope: ~4 new source files, 2 test files, 5 configs, 1 small edit to
   EMA-baseline advantage for `Chamfer_NN − Chamfer_policy` when ready.
 - Plackett-Luce one-to-one sampler.
 - Shorter training horizon vs full eval horizon.
-- Stage 2: re-match every K iters (multi-step RL).
+- Stage 2: re-match every K iters (multi-step RL). This needs:
+  - A sampling refactor: split `sample_points_from_polylines` into
+    `sample_polyline_parameters(L, nv, num_samples)` (random, returns
+    `(edge_idx, t)`) and `points_from_parameters(V, L, edge_idx, t)`
+    (deterministic, differentiable in V). The current
+    `sample_points_from_polylines` becomes the composition. Lets us freeze
+    sample params between rematch points.
+  - Decoupled `match_every` + `sample_every` knobs (option B in earlier
+    discussion). Constraint `sample_every` divides `match_every`.
 - Gumbel-Sinkhorn reparam path if REINFORCE variance is the blocker.
