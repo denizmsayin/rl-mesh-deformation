@@ -117,10 +117,12 @@ Consequences:
   M large enough that arc-length resolution > corner scale; in practice
   M ∈ {64, 128} should suffice for our procedural shapes.
 
-Implementation: a `resample_uniform_polyline(V, L, num_verts, M)` op,
-applied either as a dataset transform or at episode reset. Dataset
-transform is cleaner because then `num_verts` is constant and
-batching/padding is trivial.
+Implementation: a `resample_uniform_polyline(V, L, num_verts, M)` op that
+runs **on-device** in the training / harness loop, after batch transfer.
+Resampling (and any augmentations) belong on the GPU, not in the CPU
+dataset path. The op outputs `(V', L', nv'≡M)` with constant `num_verts`,
+so batching is trivial post-resample even though the input is
+variable-length.
 
 Variants still open:
 
@@ -129,20 +131,75 @@ Variants still open:
   control points").
 - Entropy regularization with schedulable temperature τ.
 
-## Architecture sketch
+## Implementation scope (Stage 1)
 
-- Reuse `PolygonCNN` + a small projection head → `D_match`.
-- New `rlmd/matchers/learned.py`: `LearnedMatcher` with `mode ∈
-  {"sample","argmax"}`. Sample mode returns `(Matching, log_prob, entropy)`;
-  argmax mode returns `Matching` so the existing harness eval path works.
-- New scenario for Stage B: `rlmd/evaluation/scenarios/sgd_fixed_match.py` —
-  SGD with frozen correspondences as the data term.
-- New `scripts/train_matcher.py` + `configs/train_matcher.yaml`. Hydra
-  instantiation for model, optimizer, env mode (`one_step` / `frozen_sgd`),
-  reward type, baseline source.
-- Cache file for NN baseline reward, keyed by dataset_src/dataset_tgt names.
-- Eval: drop trained matcher in argmax mode into existing harness, sweep
-  against `knn_3d`.
+**New ops:**
+
+- `rlmd/ops/resample.py` → `resample_uniform_polyline(V, L, num_verts, M)`.
+  On-device, fully batched. Returns `(V', L', nv'≡M)` with M
+  uniform-arc-length vertices and canonical cyclic edges. Invoked from the
+  training/harness loop after batch transfer — not as a CPU dataset
+  transform.
+
+**Matcher:**
+
+- Feature extractor is **config-built** (`hydra.utils.instantiate`) so we
+  can swap PolygonCNN for a GNN/Transformer later without touching the
+  matcher. Default config wires the existing `PolygonCNN`.
+- `rlmd/evaluation/matchers/learned.py`:
+  - `StochasticLearnedMatcher(feature_extractor, temperature, …)` →
+    returns `(List[Matching], log_prob: (B,), entropy: (B,))`. Used for
+    training. Has its own protocol/interface (not the existing `Matcher`).
+  - `LearnedMatcher(feature_extractor, …)` → thin wrapper that conforms to
+    the existing `Matcher` protocol, returns plain `List[Matching]` via
+    argmax. Used by the harness at eval time, drops in unchanged.
+    Constructed from a checkpoint path.
+
+**Scenario:**
+
+- Tiny edit to `SgdScenario`: add `match_every: int = 1` (1 = current
+  behaviour; `0` = match once at t=0 and reuse for all iters). No new
+  source file. Add `configs/scenario/sgd_fixed_match.yaml` selecting
+  `match_every: 0`.
+
+**Training script:**
+
+- `scripts/train_matcher.py` (Hydra entry) + `configs/train_matcher.yaml`.
+- **Baseline is configurable** so we can compare empirically:
+  `baseline: {type: none | ema, ...}`. `nn_cached` listed in future
+  plans.
+- Per-batch loop (on-device):
+  1. Resample src/tgt polylines to M vertices.
+  2. `StochasticLearnedMatcher(...)` → `(Matching, log_prob, entropy)`.
+  3. `SgdScenario(match_every=0)` runs with policy params detached
+     internally → `V_final`.
+  4. `R = −Chamfer(V_final, V_tgt)`. Compute advantage per baseline config.
+  5. Policy loss `= −(A.detach() * log_prob).mean() − β · entropy.mean()`.
+  6. Optimizer step on matcher params.
+
+**Configs:**
+
+- `configs/model/polygon_cnn_matcher.yaml` — feature net.
+- `configs/matcher/learned.yaml` — harness eval, argmax mode.
+- `configs/matcher/learned_stochastic.yaml` — training, sample mode.
+- `configs/scenario/sgd_fixed_match.yaml`.
+- `configs/train_matcher.yaml` — top-level training config.
+
+**Eval integration:**
+
+- Argmax `LearnedMatcher` slots into the existing harness via
+  `configs/matcher/learned.yaml`. Resampling op added to the harness loop
+  too (small edit).
+
+**Tests:**
+
+- `test_resample.py`: arc-length uniformity, closed-loop property,
+  gradient flow through V, batched correctness.
+- `test_learned_matcher.py`: shape checks, argmax-vs-sample consistency,
+  log-prob equals sum of per-row log-softmax, masks correct under padding.
+
+Scope: ~4 new source files, 2 test files, 5 configs, 1 small edit to
+`SgdScenario`, 1 small edit to the harness loop.
 
 ## Things to be careful about
 
@@ -164,10 +221,17 @@ Variants still open:
 - **No supervised pretrain.** Pure RL from scratch — the experimental
   question is whether RL works at all on this setup, not whether it beats
   arc-length-parameterization-with-extra-help.
+- **Sampler**: independent per-row categorical (no one-to-one constraint).
+  Plackett-Luce remains a clean future upgrade if collapse becomes an
+  issue.
+- **Direction**: unidirectional (src → tgt).
 
-## Decisions still open
+## Future-plan notes (don't implement now)
 
-1. Action sampling: independent per-row softmax sampling vs enforced
-   one-to-one (Plackett-Luce / sequential sampling without replacement).
-   See discussion below.
-2. Unidirectional vs bidirectional matching.
+- Cached NN-baseline advantage: precompute `Chamfer_NN_baseline` per (src,
+  tgt) pair, store in a sidecar file keyed by dataset names. Swap the
+  EMA-baseline advantage for `Chamfer_NN − Chamfer_policy` when ready.
+- Plackett-Luce one-to-one sampler.
+- Shorter training horizon vs full eval horizon.
+- Stage 2: re-match every K iters (multi-step RL).
+- Gumbel-Sinkhorn reparam path if REINFORCE variance is the blocker.
