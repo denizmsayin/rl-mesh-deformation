@@ -152,6 +152,63 @@ class _Baseline:
         return torch.full_like(R, b)
 
 
+def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> None:
+    """Plot reward / baseline / advantage from the per-step CSV log."""
+    import csv
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    rows = []
+    with open(log_path) as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            rows.append(r)
+    if not rows:
+        return
+
+    step = np.array([int(r["step"]) for r in rows])
+    R = np.array([float(r["reward_mean"]) for r in rows])
+    b = np.array([float(r["baseline"]) for r in rows])
+    adv = np.array([float(r["advantage_mean"]) for r in rows])
+
+    def _smooth(x):
+        w = max(1, min(200, len(x) // 20))
+        if w <= 1:
+            return x, np.arange(len(x))
+        k = np.ones(w) / w
+        s = np.convolve(x, k, mode="valid")
+        off = (w - 1) // 2
+        return s, np.arange(off, off + len(s))
+
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+
+    axes[0].plot(step, R, color="C0", alpha=0.25, lw=0.6, label="reward (raw)")
+    axes[0].plot(step, b, color="C1", alpha=0.25, lw=0.6,
+                 label=f"baseline ({baseline_type}) (raw)")
+    R_s, R_x = _smooth(R)
+    b_s, b_x = _smooth(b)
+    axes[0].plot(step[R_x], R_s, color="C0", lw=1.5, label="reward (smoothed)")
+    axes[0].plot(step[b_x], b_s, color="C1", lw=1.5, label="baseline (smoothed)")
+    axes[0].set_ylabel("reward")
+    axes[0].legend(loc="best", fontsize=8)
+    axes[0].grid(alpha=0.2)
+
+    axes[1].axhline(0.0, color="k", lw=0.6, alpha=0.5)
+    axes[1].plot(step, adv, color="C2", alpha=0.25, lw=0.6, label="advantage (raw)")
+    adv_s, adv_x = _smooth(adv)
+    axes[1].plot(step[adv_x], adv_s, color="C2", lw=1.5, label="advantage (smoothed)")
+    axes[1].set_ylabel("advantage (R - baseline)")
+    axes[1].set_xlabel("step")
+    axes[1].legend(loc="best", fontsize=8)
+    axes[1].grid(alpha=0.2)
+
+    fig.suptitle(f"Training curves (baseline={baseline_type})")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def train(cfg: DictConfig) -> str:
     device = _resolve_device(cfg.device)
     torch.manual_seed(cfg.seed)
@@ -268,6 +325,7 @@ def train(cfg: DictConfig) -> str:
         logf.write(
             "step,traj,reward_mean,reward_std,"
             "reward_chamfer_mean,reward_normal_mean,"
+            "advantage_mean,advantage_std,"
             "loss,entropy,baseline\n"
         )
 
@@ -326,11 +384,13 @@ def train(cfg: DictConfig) -> str:
             loss.backward()
             optimizer.step()
 
+            adv_std = advantage.std().item() if advantage.numel() > 1 else 0.0
             logf.write(
                 f"{step},{traj},"
                 f"{R.mean().item():.6g},{R.std().item():.6g},"
                 f"{out['chamfer_sym'].mean().item():.6g},"
                 f"{out['normal_sym'].mean().item():.6g},"
+                f"{advantage.mean().item():.6g},{adv_std:.6g},"
                 f"{loss.item():.6g},{entropy.mean().item():.6g},"
                 f"{b.mean().item():.6g}\n"
             )
@@ -357,6 +417,15 @@ def train(cfg: DictConfig) -> str:
 
     if eval_logf is not None:
         eval_logf.close()
+
+    try:
+        _save_training_curves(
+            log_path,
+            os.path.join(output_dir, "training_curves.png"),
+            baseline_type,
+        )
+    except Exception as e:
+        print(f"warning: failed to render training curves: {e}")
 
     return ckpt_path
 
