@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -36,7 +36,15 @@ class SgdScenario:
     w_laplacian: float = 0.1
     distance_p: int = 2
 
-    def run(self, poly_src: Polyline, poly_tgt: Polyline, matcher) -> torch.Tensor:
+    def run(
+        self,
+        poly_src: Polyline,
+        poly_tgt: Polyline,
+        matcher,
+        *,
+        record_every: Optional[int] = None,
+        record_max_batch: Optional[int] = None,
+    ):
         V_src, L_src, nv_src = poly_src
         V_tgt, L_tgt, nv_tgt = poly_tgt
 
@@ -48,9 +56,17 @@ class SgdScenario:
         n_samples_tgt = torch.full((V_tgt.shape[0],), self.num_samples,
                                    dtype=torch.long, device=V_tgt.device)
 
-        for _ in range(self.num_iters):
+        frames = [] if record_every is not None else None
+        K = record_max_batch if record_max_batch is not None else V_src.shape[0]
+
+        def _snapshot(V_now: torch.Tensor) -> None:
+            frames.append(V_now[:K].detach().to("cpu", copy=True))
+
+        for i in range(self.num_iters):
             optimizer.zero_grad()
             V = V_src + deform
+            if frames is not None and i % record_every == 0:
+                _snapshot(V)
             P = sample_points_from_polylines(V, L_src, nv_src, self.num_samples)
             P_tgt = sample_points_from_polylines(V_tgt, L_tgt, nv_tgt, self.num_samples)
             matchings = matcher(P, n_samples_src, P_tgt, n_samples_tgt)
@@ -65,4 +81,8 @@ class SgdScenario:
             total.backward()
             optimizer.step()
 
-        return (V_src + deform).detach()
+        V_final = (V_src + deform).detach()
+        if frames is not None:
+            _snapshot(V_final)
+            return V_final, torch.stack(frames, dim=0)
+        return V_final

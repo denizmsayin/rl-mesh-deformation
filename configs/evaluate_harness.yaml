@@ -29,6 +29,16 @@ output_csv: results.csv
 # When true, write one PNG per batch (same layout as scripts/deform_polylines.py). CLI: visualize_deformations=true
 visualize_deformations: true
 
+# When enabled, record an MP4 animation of the deformation for the first K
+# samples of the first batch. Only supported by scenarios whose `run` accepts a
+# `record_every` kwarg (e.g. SgdScenario).
+record_deformation:
+  enabled: false
+  first_k: 8
+  every: 10           # snapshot V every N optimizer iters
+  duration_s: 8.0     # target clip length; fps derived as num_frames / duration_s
+  filename: deformation.mp4
+
 # When set, both src and tgt polylines are uniformly arc-length resampled to M
 # vertices on-device before scenario + metrics. Required for the learned-matcher
 # path (M must match the checkpoint's training M). Useful as a fair-comparison

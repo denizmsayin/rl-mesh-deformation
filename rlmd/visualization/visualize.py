@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
@@ -176,3 +178,96 @@ def plot_polylines_initial_vs_final(
         axes[i, 0].set_ylabel(f"{title_prefix}\n{first_index + i}", fontsize=10)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+
+
+def render_deformation_video(
+    frames,
+    L_src,
+    nv_src,
+    V_tgt,
+    L_tgt,
+    nv_tgt,
+    out_path,
+    *,
+    duration_s=8.0,
+    min_fps=5,
+    dpi=100,
+    title_prefix="sample",
+    first_index=0,
+):
+    """Encode an MP4 animation of a polyline deformation.
+
+    frames: (T, K, N, 2) tensor of source vertex positions over time.
+    Static targets are drawn once per axis; src segments update each frame.
+    """
+    import imageio.v2 as imageio
+
+    SRC_COLOR = "#1f77b4"
+    TGT_COLOR = "#ff7f0e"
+
+    frames_np = frames.numpy() if hasattr(frames, "numpy") else np.asarray(frames)
+    T, K = frames_np.shape[0], frames_np.shape[1]
+    nv_s = nv_src.cpu().numpy()
+    nv_t = nv_tgt.cpu().numpy()
+    L_s = L_src.cpu().numpy()
+    L_t = L_tgt.cpu().numpy()
+    V_t = V_tgt.cpu().numpy()
+
+    cols = min(4, K)
+    rows = math.ceil(K / cols)
+    fig, axes = plt.subplots(rows, cols, figsize=(2.6 * cols, 2.6 * rows),
+                             dpi=dpi, squeeze=False)
+
+    src_collections = []
+    for i in range(K):
+        ax = axes[i // cols, i % cols]
+        n_s = int(nv_s[i])
+        n_t = int(nv_t[i])
+        v_t = V_t[i, :n_t]
+        e_t = L_t[i, :n_t]
+        e_s = L_s[i, :n_s]
+
+        tgt_seg = np.stack((v_t[e_t[:, 0]], v_t[e_t[:, 1]]), axis=1)
+        ax.add_collection(LineCollection(tgt_seg, colors=TGT_COLOR,
+                                         linewidths=1.0, alpha=0.55, zorder=1))
+
+        src_lc = LineCollection([], colors=SRC_COLOR, linewidths=1.2,
+                                alpha=0.85, zorder=2)
+        ax.add_collection(src_lc)
+        src_collections.append((src_lc, e_s, n_s))
+
+        all_pts = np.concatenate(
+            [frames_np[:, i, :n_s].reshape(-1, 2), v_t], axis=0)
+        span = float(all_pts.max() - all_pts.min())
+        pad = 0.1 * span if span > 0 else 0.05
+        ax.set_xlim(float(all_pts[:, 0].min()) - pad,
+                    float(all_pts[:, 0].max()) + pad)
+        ax.set_ylim(float(all_pts[:, 1].min()) - pad,
+                    float(all_pts[:, 1].max()) + pad)
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(f"{title_prefix} {first_index + i}", fontsize=9)
+
+    for j in range(K, rows * cols):
+        axes[j // cols, j % cols].axis("off")
+
+    iter_text = fig.text(0.01, 0.99, "", ha="left", va="top", fontsize=9)
+    fig.tight_layout()
+
+    fps = max(min_fps, int(round(T / max(duration_s, 1e-6))))
+    writer = imageio.get_writer(out_path, fps=fps, codec="libx264",
+                                quality=8, macro_block_size=1)
+    try:
+        for t in range(T):
+            iter_text.set_text(f"frame {t + 1}/{T}")
+            for i, (src_lc, e_s, n_s) in enumerate(src_collections):
+                v = frames_np[t, i, :n_s]
+                seg = np.stack((v[e_s[:, 0]], v[e_s[:, 1]]), axis=1)
+                src_lc.set_segments(seg)
+            fig.canvas.draw()
+            buf = np.asarray(fig.canvas.buffer_rgba())
+            writer.append_data(buf[..., :3].copy())
+    finally:
+        writer.close()
+        plt.close(fig)

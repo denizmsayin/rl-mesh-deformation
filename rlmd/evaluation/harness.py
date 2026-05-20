@@ -11,7 +11,10 @@ from tqdm import tqdm
 
 from rlmd.dataset import shape_collate_fn
 from rlmd.ops import resample_uniform_polyline
-from rlmd.visualization.visualize import plot_polylines_initial_vs_final
+from rlmd.visualization.visualize import (
+    plot_polylines_initial_vs_final,
+    render_deformation_video,
+)
 
 
 CSV_HEADER = [
@@ -163,6 +166,9 @@ def run(cfg: DictConfig) -> str:
     resample_M = cfg.get("resample_M", None)
     if resample_M is not None:
         resample_M = int(resample_M)
+
+    record_cfg = cfg.get("record_deformation", None)
+    record_enabled = bool(record_cfg and record_cfg.get("enabled", False))
     with open(output_csv, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
@@ -181,11 +187,36 @@ def run(cfg: DictConfig) -> str:
                 V_tgt, L_tgt, nv_tgt = resample_uniform_polyline(
                     V_tgt, L_tgt, nv_tgt, resample_M)
 
-            V_final = scenario.run(
-                (V_src, L_src, nv_src),
-                (V_tgt, L_tgt, nv_tgt),
-                matcher,
-            )
+            record_this_batch = record_enabled and batch_i == 0
+            if record_this_batch:
+                K_rec = int(record_cfg.first_k)
+                V_final, frames = scenario.run(
+                    (V_src, L_src, nv_src),
+                    (V_tgt, L_tgt, nv_tgt),
+                    matcher,
+                    record_every=int(record_cfg.every),
+                    record_max_batch=K_rec,
+                )
+                K_rec = min(K_rec, int(V_src.shape[0]))
+                video_path = os.path.join(output_dir, str(record_cfg.filename))
+                render_deformation_video(
+                    frames,
+                    L_src[:K_rec],
+                    nv_src[:K_rec],
+                    V_tgt[:K_rec],
+                    L_tgt[:K_rec],
+                    nv_tgt[:K_rec],
+                    video_path,
+                    duration_s=float(record_cfg.duration_s),
+                    first_index=sample_idx,
+                )
+                print(f"wrote deformation video {video_path}")
+            else:
+                V_final = scenario.run(
+                    (V_src, L_src, nv_src),
+                    (V_tgt, L_tgt, nv_tgt),
+                    matcher,
+                )
 
             if visualize:
                 vis_path = os.path.join(output_dir,
