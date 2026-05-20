@@ -1,7 +1,7 @@
 _target_: rlmd.evaluation.scenarios.SgdFixedMatchScenario
 name: sgd_fixed_match
-num_iters: 200
-lr: 1e-1
+num_iters: 2000
+lr: 1.0
 momentum: 0.9
 w_data: 1.0
 w_edge: 1.0

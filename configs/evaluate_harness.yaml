@@ -24,6 +24,9 @@ num_workers: 0
 pin_memory: false
 device: auto
 
+# Override the auto-dated hydra run dir with a fixed name. CLI: run_name=my_experiment
+run_name: ???
+
 output_csv: results.csv
 
 # When true, write one PNG per batch (same layout as scripts/deform_polylines.py). CLI: visualize_deformations=true
@@ -49,4 +52,4 @@ hydra:
   job:
     chdir: false
   run:
-    dir: outputs/evaluate_harness/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/evaluate_harness/${oc.select:run_name,${now:%Y-%m-%d}/${now:%H-%M-%S}}
