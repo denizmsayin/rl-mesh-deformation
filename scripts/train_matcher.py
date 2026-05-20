@@ -55,6 +55,9 @@ def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, dev
     former wraps its forward in no_grad, the latter has no params). Only the
     reward Chamfer is wrapped in no_grad here.
     """
+    assert len(batches_src) == len(batches_tgt), (
+        f"src/tgt batch counts disagree: {len(batches_src)} vs {len(batches_tgt)}"
+    )
     rewards = []
     for batch_src, batch_tgt in zip(batches_src, batches_tgt):
         V_src, L_src, nv_src, _ = _to_device(batch_src, device)
@@ -120,13 +123,16 @@ class _Baseline:
     def __call__(self, R: torch.Tensor) -> torch.Tensor:
         if self.type == "none":
             return torch.zeros_like(R)
-        # ema
+        # ema: return the current (pre-update) value, then update with this batch.
+        # First-batch fallback uses the batch mean so the very first advantage is
+        # centered rather than equal to R.
         batch_mean = R.detach().mean().item()
+        b = batch_mean if self.value is None else self.value
         if self.value is None:
             self.value = batch_mean
         else:
             self.value = self.momentum * self.value + (1.0 - self.momentum) * batch_mean
-        return torch.full_like(R, self.value)
+        return torch.full_like(R, b)
 
 
 def train(cfg: DictConfig) -> str:

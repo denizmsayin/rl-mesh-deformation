@@ -15,12 +15,12 @@ seed: 0
 # iterates until traj >= total_trajectories. Cadence knobs below (eval,
 # checkpoint) stay in gradient steps because they're tied to policy updates,
 # not experience.
-total_trajectories: 160_000
+total_trajectories: 1_000_000
 checkpoint_every_steps: 500   # null disables periodic checkpoints; end-of-run save always happens
-batch_size: 32
+batch_size: 8192
 
 # Uniform-resample target count for the policy / inner SGD.
-M: 128
+M: 16
 
 # REINFORCE
 entropy_coef: 0.01
@@ -30,10 +30,10 @@ entropy_coef: 0.01
 #   type: none
 baseline:
   type: ema
-  momentum: 0.99
+  momentum: 0.90
 
 # Number of points to sample from each polyline for the reward Chamfer.
-reward_num_samples: 1024
+reward_num_samples: 8192
 
 optimizer:
   _target_: torch.optim.Adam

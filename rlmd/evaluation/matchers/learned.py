@@ -116,6 +116,7 @@ class LearnedMatcher:
         self.feature_extractor.eval()
 
     def __call__(self, V_src, n_src, V_tgt, n_tgt) -> List[Matching]:
+        self.feature_extractor.to(V_src.device)
         with torch.no_grad():
             S = _compute_scores(self.feature_extractor, V_src, n_src, V_tgt, n_tgt,
                                 self.temperature)
