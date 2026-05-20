@@ -189,6 +189,7 @@ def render_deformation_video(
     nv_tgt,
     out_path,
     *,
+    match_idx=None,
     duration_s=8.0,
     min_fps=5,
     dpi=100,
@@ -199,6 +200,12 @@ def render_deformation_video(
 
     frames: (T, K, N, 2) tensor of source vertex positions over time.
     Static targets are drawn once per axis; src segments update each frame.
+
+    When ``match_idx`` is given (shape (K, N) long), the matching is drawn as
+    a per-sample quiver of arrows from current source vertex to V_tgt[match_idx],
+    with source vertices colored by index (turbo cmap) and target vertices
+    colored by the mean color of the source vertices matched to them — same
+    convention as ``visualize_matching(mode='gradient')``.
     """
     import imageio.v2 as imageio
 
@@ -213,12 +220,21 @@ def render_deformation_video(
     L_t = L_tgt.cpu().numpy()
     V_t = V_tgt.cpu().numpy()
 
+    has_match = match_idx is not None
+    m_np = None
+    cmap = None
+    if has_match:
+        m_np = match_idx.cpu().numpy() if hasattr(match_idx, "cpu") else np.asarray(match_idx)
+        cmap = plt.get_cmap("turbo")
+
     cols = min(4, K)
     rows = math.ceil(K / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(2.6 * cols, 2.6 * rows),
                              dpi=dpi, squeeze=False)
 
     src_collections = []
+    src_scatters = []
+    quivers = []
     for i in range(K):
         ax = axes[i // cols, i % cols]
         n_s = int(nv_s[i])
@@ -235,6 +251,29 @@ def render_deformation_video(
                                 alpha=0.85, zorder=2)
         ax.add_collection(src_lc)
         src_collections.append((src_lc, e_s, n_s))
+
+        if has_match:
+            src_colors_i = cmap(np.linspace(0.0, 1.0, max(n_s, 2)))[:n_s]
+            mi = m_np[i, :n_s]
+            tgt_colors_i = np.full((n_t, 4), (0.72, 0.72, 0.72, 0.82), dtype=float)
+            for tj in range(n_t):
+                hits = np.where(mi == tj)[0]
+                if hits.size:
+                    tgt_colors_i[tj] = src_colors_i[hits].mean(axis=0)
+            ax.scatter(v_t[:, 0], v_t[:, 1], c=tgt_colors_i, s=14, zorder=3,
+                       edgecolors="none")
+            sc = ax.scatter(np.zeros(n_s), np.zeros(n_s), c=src_colors_i,
+                            s=14, zorder=4, edgecolors="none")
+            q = ax.quiver(
+                np.zeros(n_s), np.zeros(n_s), np.zeros(n_s), np.zeros(n_s),
+                color=src_colors_i, angles="xy", scale_units="xy", scale=1.0,
+                width=0.005, headwidth=3.5, headlength=4.5, alpha=0.55, zorder=3,
+            )
+            src_scatters.append((sc, n_s))
+            quivers.append((q, mi, v_t, n_s))
+        else:
+            src_scatters.append((None, n_s))
+            quivers.append((None, None, None, n_s))
 
         all_pts = np.concatenate(
             [frames_np[:, i, :n_s].reshape(-1, 2), v_t], axis=0)
@@ -261,10 +300,18 @@ def render_deformation_video(
     try:
         for t in range(T):
             iter_text.set_text(f"frame {t + 1}/{T}")
-            for i, (src_lc, e_s, n_s) in enumerate(src_collections):
+            for i, ((src_lc, e_s, n_s), (sc, _), (q, mi, v_t_i, _)) in enumerate(
+                    zip(src_collections, src_scatters, quivers)):
                 v = frames_np[t, i, :n_s]
                 seg = np.stack((v[e_s[:, 0]], v[e_s[:, 1]]), axis=1)
                 src_lc.set_segments(seg)
+                if sc is not None:
+                    sc.set_offsets(v)
+                if q is not None:
+                    tgt_match = v_t_i[mi]
+                    dxy = tgt_match - v
+                    q.set_offsets(v)
+                    q.set_UVC(dxy[:, 0], dxy[:, 1])
             fig.canvas.draw()
             buf = np.asarray(fig.canvas.buffer_rgba())
             writer.append_data(buf[..., :3].copy())

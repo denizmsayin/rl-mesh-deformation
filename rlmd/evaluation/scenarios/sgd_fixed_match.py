@@ -106,5 +106,5 @@ class SgdFixedMatchScenario:
         V_final = (V_src + deform).detach()
         if frames is not None:
             _snapshot(V_final)
-            return V_final, torch.stack(frames, dim=0)
+            return V_final, torch.stack(frames, dim=0), matchings
         return V_final

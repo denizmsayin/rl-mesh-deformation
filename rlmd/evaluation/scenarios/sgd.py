@@ -84,5 +84,7 @@ class SgdScenario:
         V_final = (V_src + deform).detach()
         if frames is not None:
             _snapshot(V_final)
-            return V_final, torch.stack(frames, dim=0)
+            # Matchings here are per-iteration and not stored; return None for API
+            # consistency with SgdFixedMatchScenario.
+            return V_final, torch.stack(frames, dim=0), None
         return V_final

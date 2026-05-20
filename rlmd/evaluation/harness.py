@@ -190,7 +190,7 @@ def run(cfg: DictConfig) -> str:
             record_this_batch = record_enabled and batch_i == 0
             if record_this_batch:
                 K_rec = int(record_cfg.first_k)
-                V_final, frames = scenario.run(
+                V_final, frames, matchings = scenario.run(
                     (V_src, L_src, nv_src),
                     (V_tgt, L_tgt, nv_tgt),
                     matcher,
@@ -198,6 +198,12 @@ def run(cfg: DictConfig) -> str:
                     record_max_batch=K_rec,
                 )
                 K_rec = min(K_rec, int(V_src.shape[0]))
+                # Pass the source->target matching (first entry) into the
+                # video renderer so it can overlay matching arrows. None for
+                # scenarios that don't have a single fixed matching.
+                match_idx_vis = None
+                if matchings is not None and len(matchings) > 0:
+                    match_idx_vis = matchings[0].idx_tgt[:K_rec].detach().cpu()
                 video_path = os.path.join(output_dir, str(record_cfg.filename))
                 render_deformation_video(
                     frames,
@@ -207,6 +213,7 @@ def run(cfg: DictConfig) -> str:
                     L_tgt[:K_rec],
                     nv_tgt[:K_rec],
                     video_path,
+                    match_idx=match_idx_vis,
                     duration_s=float(record_cfg.duration_s),
                     first_index=sample_idx,
                 )
