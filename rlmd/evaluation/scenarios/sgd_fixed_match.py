@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -50,7 +50,15 @@ class SgdFixedMatchScenario:
     w_laplacian: float = 0.1
     distance_p: int = 2
 
-    def run(self, poly_src: Polyline, poly_tgt: Polyline, matcher) -> torch.Tensor:
+    def run(
+        self,
+        poly_src: Polyline,
+        poly_tgt: Polyline,
+        matcher,
+        *,
+        record_every: Optional[int] = None,
+        record_max_batch: Optional[int] = None,
+    ):
         V_src, L_src, nv_src = poly_src
         V_tgt, _, nv_tgt = poly_tgt
 
@@ -60,9 +68,17 @@ class SgdFixedMatchScenario:
         deform = torch.zeros_like(V_src, requires_grad=True)
         optimizer = torch.optim.SGD([deform], lr=self.lr, momentum=self.momentum)
 
-        for _ in range(self.num_iters):
+        frames = [] if record_every is not None else None
+        K = record_max_batch if record_max_batch is not None else V_src.shape[0]
+
+        def _snapshot(V_now: torch.Tensor) -> None:
+            frames.append(V_now[:K].detach().to("cpu", copy=True))
+
+        for i in range(self.num_iters):
             optimizer.zero_grad()
             V = V_src + deform
+            if frames is not None and i % record_every == 0:
+                _snapshot(V)
             l_data = distance_loss(V, V_tgt, matchings, p=self.distance_p)
             l_edge = polyline_edge_loss(V, L_src, nv_src)
             l_normal = polyline_normal_consistency(V, L_src, nv_src)
@@ -74,4 +90,8 @@ class SgdFixedMatchScenario:
             total.backward()
             optimizer.step()
 
-        return (V_src + deform).detach()
+        V_final = (V_src + deform).detach()
+        if frames is not None:
+            _snapshot(V_final)
+            return V_final, torch.stack(frames, dim=0)
+        return V_final
