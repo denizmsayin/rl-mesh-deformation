@@ -146,7 +146,13 @@ def train(cfg: DictConfig) -> str:
     matcher.feature_extractor.to(device)
     matcher.feature_extractor.train()
 
-    optimizer = instantiate(cfg.optimizer, params=matcher.feature_extractor.parameters())
+    # Keep an uncompiled handle for state_dict saves and optimizer params; the
+    # matcher's `feature_extractor` attribute is swapped for the compiled
+    # wrapper so all forward calls (training + argmax eval) go through it.
+    feature_extractor = matcher.feature_extractor
+    matcher.feature_extractor = torch.compile(feature_extractor)
+
+    optimizer = instantiate(cfg.optimizer, params=feature_extractor.parameters())
 
     scenario = instantiate(cfg.scenario)
 
@@ -201,7 +207,7 @@ def train(cfg: DictConfig) -> str:
 
     def _save_checkpoint(step):
         torch.save({
-            "feature_extractor_state_dict": matcher.feature_extractor.state_dict(),
+            "feature_extractor_state_dict": feature_extractor.state_dict(),
             "temperature": matcher.temperature,
             "M": int(cfg.M),
             "step": step,

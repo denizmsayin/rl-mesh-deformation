@@ -14,6 +14,23 @@ from rlmd.ops import (
 Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts)
 
 
+def _inner_loss(V_src, deform, V_tgt, matchings, L_src, nv_src,
+                w_data, w_edge, w_normal, w_laplacian, p):
+    V = V_src + deform
+    l_data = distance_loss(V, V_tgt, matchings, p=p)
+    l_edge = polyline_edge_loss(V, L_src, nv_src)
+    l_normal = polyline_normal_consistency(V, L_src, nv_src)
+    l_laplacian = polyline_laplacian_smoothing(V, L_src, nv_src)
+    total = (w_data * l_data
+             + w_edge * l_edge
+             + w_normal * l_normal
+             + w_laplacian * l_laplacian)
+    return total, V
+
+
+_inner_loss_compiled = torch.compile(_inner_loss)
+
+
 @dataclass
 class SgdFixedMatchScenario:
     """
@@ -76,17 +93,13 @@ class SgdFixedMatchScenario:
 
         for i in range(self.num_iters):
             optimizer.zero_grad()
-            V = V_src + deform
+            total, V = _inner_loss_compiled(
+                V_src, deform, V_tgt, matchings, L_src, nv_src,
+                self.w_data, self.w_edge, self.w_normal, self.w_laplacian,
+                self.distance_p,
+            )
             if frames is not None and i % record_every == 0:
                 _snapshot(V)
-            l_data = distance_loss(V, V_tgt, matchings, p=self.distance_p)
-            l_edge = polyline_edge_loss(V, L_src, nv_src)
-            l_normal = polyline_normal_consistency(V, L_src, nv_src)
-            l_laplacian = polyline_laplacian_smoothing(V, L_src, nv_src)
-            total = (self.w_data * l_data
-                     + self.w_edge * l_edge
-                     + self.w_normal * l_normal
-                     + self.w_laplacian * l_laplacian)
             total.backward()
             optimizer.step()
 
