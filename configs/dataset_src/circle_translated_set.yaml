@@ -1,0 +1,6 @@
+name: circle_translated_set
+dataset:
+  _target_: rlmd.dataset.ShapeDiskDataset
+  dataset_folder: ${oc.env:RLMD_DATASET,data_generation/generated_dataset}/circle_translated_set
+  shape_names: ["circle"]
+  cache_size: 8

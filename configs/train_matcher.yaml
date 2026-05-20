@@ -1,11 +1,11 @@
 defaults:
-  - dataset_src: circle_stream
+  - dataset_src: circle_translated_stream
   - dataset_tgt: shapes_stream
   - matcher: learned_stochastic
   - scenario: sgd_fixed_match
   # Held-out fixed disk datasets for periodic eval. Package overrides drop the
   # disk configs under `eval.dataset_src` / `eval.dataset_tgt`.
-  - /dataset_src@eval.dataset_src: circle_set
+  - /dataset_src@eval.dataset_src: circle_translated_set
   - /dataset_tgt@eval.dataset_tgt: any_set
   - _self_
 

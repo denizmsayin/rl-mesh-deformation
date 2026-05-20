@@ -1,0 +1,35 @@
+
+
+## Evaluation 
+
+Checkpoint trained at M=128 over 2442 gradient steps. Here are the commands.
+
+  Evaluate the learned matcher
+
+  pixi run python scripts/evaluate_harness.py \
+    matcher=learned \
+    matcher.checkpoint_path=runs/default_10mil/matcher.pt \
+    scenario=sgd_fixed_match \
+    resample_M=128 \
+    hydra.run.dir=outputs/eval/default_10mil
+
+  This:
+  - Loads the checkpoint into LearnedMatcher (argmax mode, drops into the existing protocol).
+  - Uses sgd_fixed_match so eval mirrors the training regime (vertex-direct frozen-match SGD).
+  - resample_M=128 is required — the feature extractor was trained on uniformly-resampled 128-vertex
+  polylines; without this it'll see raw variable-vertex polylines and the features will be out of
+  distribution.
+  - Writes outputs/eval/default_10mil/results.csv.
+
+  Fair-comparison baseline (recommended)
+
+  To compare against knn_3d on the same input regime — same scenario, same resample, same datasets:
+
+  pixi run python scripts/evaluate_harness.py \
+    matcher=knn_3d \
+    scenario=sgd_fixed_match \
+    resample_M=128 \
+    hydra.run.dir=outputs/eval/baseline_knn_fixed_match
+
+  The two CSVs share columns and the matcher column distinguishes them, so pd.concat([read(a),
+  read(b)]) then group by (metric, src_shape, tgt_shape, matcher) gives a direct comparison.
