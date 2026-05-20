@@ -84,8 +84,14 @@ def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, dev
 
 
 def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M, device,
-              compare_to_knn: bool, eval_batch_size: int, w_chamfer: float, w_normal: float):
-    """Argmax rollout on a held-out subset; optionally also Knn3dMatcher rollout."""
+              compare_to_knn: bool, eval_batch_size: int, w_chamfer: float, w_normal: float,
+              streamed_batches=None, prior_matcher=None):
+    """Argmax rollout on a held-out subset; optionally also Knn3dMatcher rollout.
+
+    If ``streamed_batches`` is given as a (list[batch_src], list[batch_tgt]) pair,
+    also run learned + prior rollouts on it for an in-training-distribution
+    diagnostic. If ``prior_matcher`` is also given, its rollout is reported.
+    """
     eval_src = _build_eval_subset(ds_src, eval_cfg.get("num_samples"),
                                   eval_cfg.get("seed_src", 100))
     eval_tgt = _build_eval_subset(ds_tgt, eval_cfg.get("num_samples"),
@@ -105,6 +111,27 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
         "learned_reward_mean": float(R_learned.mean().item()),
         "learned_reward_std": float(R_learned.std().item() if R_learned.numel() > 1 else 0.0),
     }
+    if streamed_batches is not None:
+        s_src, s_tgt = streamed_batches
+        R_stream_learned = _rollout_reward(learned, scenario, chamfer, s_src, s_tgt, M, device,
+                                           w_chamfer, w_normal)
+        out["stream_learned_reward_mean"] = float(R_stream_learned.mean().item())
+        out["stream_learned_reward_std"] = float(
+            R_stream_learned.std().item() if R_stream_learned.numel() > 1 else 0.0)
+        if prior_matcher is not None:
+            R_stream_prior = _rollout_reward(prior_matcher, scenario, chamfer, s_src, s_tgt, M,
+                                             device, w_chamfer, w_normal)
+            out["stream_prior_reward_mean"] = float(R_stream_prior.mean().item())
+            out["stream_prior_reward_std"] = float(
+                R_stream_prior.std().item() if R_stream_prior.numel() > 1 else 0.0)
+        else:
+            out["stream_prior_reward_mean"] = float("nan")
+            out["stream_prior_reward_std"] = float("nan")
+    else:
+        out["stream_learned_reward_mean"] = float("nan")
+        out["stream_learned_reward_std"] = float("nan")
+        out["stream_prior_reward_mean"] = float("nan")
+        out["stream_prior_reward_std"] = float("nan")
     if compare_to_knn:
         knn = Knn3dMatcher(bidirectional=False)
         R_knn = _rollout_reward(knn, scenario, chamfer, batches_src, batches_tgt, M, device,
@@ -181,6 +208,30 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
         off = (w - 1) // 2
         return s, np.arange(off, off + len(s))
 
+    # Optional: read eval_log.csv from the same directory and overlay the
+    # streamed-eval signal (same distribution as training, fixed seed) on the
+    # top panel. Lives on the same y-scale as the training reward so direct
+    # overlay makes sense.
+    eval_log_path = os.path.join(os.path.dirname(log_path), "eval_log.csv")
+    eval_step = eval_stream_learned = eval_stream_prior = None
+    if os.path.exists(eval_log_path):
+        e_rows = []
+        with open(eval_log_path) as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                e_rows.append(r)
+        if e_rows and "stream_learned_reward_mean" in e_rows[0]:
+            def _maybe_float(s):
+                try:
+                    return float(s)
+                except (TypeError, ValueError):
+                    return float("nan")
+            eval_step = np.array([int(r["step"]) for r in e_rows])
+            eval_stream_learned = np.array(
+                [_maybe_float(r["stream_learned_reward_mean"]) for r in e_rows])
+            eval_stream_prior = np.array(
+                [_maybe_float(r["stream_prior_reward_mean"]) for r in e_rows])
+
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
     axes[0].plot(step, R, color="C0", alpha=0.25, lw=0.6, label="reward (raw)")
@@ -190,6 +241,13 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     b_s, b_x = _smooth(b)
     axes[0].plot(step[R_x], R_s, color="C0", lw=1.5, label="reward (smoothed)")
     axes[0].plot(step[b_x], b_s, color="C1", lw=1.5, label="baseline (smoothed)")
+    if eval_step is not None and eval_stream_learned is not None and np.isfinite(
+            eval_stream_learned).any():
+        axes[0].plot(eval_step, eval_stream_learned, "o-", color="C0",
+                     markersize=4, lw=0.8, label="stream eval learned")
+        if eval_stream_prior is not None and np.isfinite(eval_stream_prior).any():
+            axes[0].plot(eval_step, eval_stream_prior, "o-", color="C1",
+                         markersize=4, lw=0.8, label="stream eval prior")
     axes[0].set_ylabel("reward")
     axes[0].legend(loc="best", fontsize=8)
     axes[0].grid(alpha=0.2)
@@ -198,6 +256,13 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     axes[1].plot(step, adv, color="C2", alpha=0.25, lw=0.6, label="advantage (raw)")
     adv_s, adv_x = _smooth(adv)
     axes[1].plot(step[adv_x], adv_s, color="C2", lw=1.5, label="advantage (smoothed)")
+    if (eval_step is not None and eval_stream_learned is not None
+            and eval_stream_prior is not None
+            and np.isfinite(eval_stream_learned).any()
+            and np.isfinite(eval_stream_prior).any()):
+        axes[1].plot(eval_step, eval_stream_learned - eval_stream_prior, "o-",
+                     color="C3", markersize=4, lw=0.8,
+                     label="stream eval advantage")
     axes[1].set_ylabel("advantage (R - baseline)")
     axes[1].set_xlabel("step")
     axes[1].legend(loc="best", fontsize=8)
@@ -267,14 +332,34 @@ def train(cfg: DictConfig) -> str:
     eval_compare_to_knn = bool(eval_cfg.get("compare_to_knn", True))
 
     eval_logf = open(eval_log_path, "w") if eval_every is not None else None
+    streamed_eval_batches = None
     if eval_logf is not None:
         eval_logf.write(
             "step,learned_reward_mean,learned_reward_std,"
             "knn_reward_mean,knn_reward_std,"
-            "knn_bi_reward_mean,knn_bi_reward_std\n"
+            "knn_bi_reward_mean,knn_bi_reward_std,"
+            "stream_learned_reward_mean,stream_learned_reward_std,"
+            "stream_prior_reward_mean,stream_prior_reward_std\n"
         )
         eval_ds_src = instantiate(cfg.eval.dataset_src.dataset)
         eval_ds_tgt = instantiate(cfg.eval.dataset_tgt.dataset)
+
+        # Streamed-eval batch: same distribution as training, but reproducible
+        # across evals. Built once at startup with eval-specific seeds drawn
+        # from `eval.stream_seed_src/tgt`, falling back to seed_src/seed_tgt
+        # offset by 1000 to avoid colliding with the disk-eval seeds.
+        eval_stream_n = int(eval_cfg.get("num_samples", 64))
+        stream_seed_src = int(eval_cfg.get("stream_seed_src",
+                                           int(eval_cfg.get("seed_src", 100)) + 1000))
+        stream_seed_tgt = int(eval_cfg.get("stream_seed_tgt",
+                                           int(eval_cfg.get("seed_tgt", 101)) + 1000))
+        src_eval_sampler = instantiate(cfg.dataset_src.source, seed=stream_seed_src)
+        tgt_eval_sampler = instantiate(cfg.dataset_tgt.source, seed=stream_seed_tgt)
+        cpu = torch.device("cpu")
+        streamed_eval_batches = (
+            [src_eval_sampler.next_batch(eval_stream_n, cpu)],
+            [tgt_eval_sampler.next_batch(eval_stream_n, cpu)],
+        )
     else:
         eval_ds_src = eval_ds_tgt = None
 
@@ -286,6 +371,8 @@ def train(cfg: DictConfig) -> str:
             scenario, chamfer, int(cfg.M), device,
             eval_compare_to_knn, eval_batch_size,
             w_chamfer, w_normal,
+            streamed_batches=streamed_eval_batches,
+            prior_matcher=prior_matcher,
         )
         eval_logf.write(
             f"{step},{metrics['learned_reward_mean']:.6g},"
@@ -293,15 +380,22 @@ def train(cfg: DictConfig) -> str:
             f"{metrics['knn_reward_mean']:.6g},"
             f"{metrics['knn_reward_std']:.6g},"
             f"{metrics['knn_bi_reward_mean']:.6g},"
-            f"{metrics['knn_bi_reward_std']:.6g}\n"
+            f"{metrics['knn_bi_reward_std']:.6g},"
+            f"{metrics['stream_learned_reward_mean']:.6g},"
+            f"{metrics['stream_learned_reward_std']:.6g},"
+            f"{metrics['stream_prior_reward_mean']:.6g},"
+            f"{metrics['stream_prior_reward_std']:.6g}\n"
         )
         eval_logf.flush()
-        tqdm.write(
-            f"[eval @ step {step}] learned={metrics['learned_reward_mean']:.4f}"
-            + (f"  knn={metrics['knn_reward_mean']:.4f}"
-               f"  knn_bi={metrics['knn_bi_reward_mean']:.4f}"
-               if eval_compare_to_knn else "")
-        )
+        msg = f"[eval @ step {step}] learned={metrics['learned_reward_mean']:.4f}"
+        if eval_compare_to_knn:
+            msg += (f"  knn={metrics['knn_reward_mean']:.4f}"
+                    f"  knn_bi={metrics['knn_bi_reward_mean']:.4f}")
+        if streamed_eval_batches is not None:
+            msg += f"  stream={metrics['stream_learned_reward_mean']:.4f}"
+            if prior_matcher is not None:
+                msg += f"  stream_prior={metrics['stream_prior_reward_mean']:.4f}"
+        tqdm.write(msg)
 
     def _save_checkpoint(step):
         torch.save({
