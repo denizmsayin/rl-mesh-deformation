@@ -46,8 +46,14 @@ def _build_eval_subset(dataset, num_samples, seed):
     return Subset(dataset, indices)
 
 
-def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, device):
-    """Run scenario for each pair, return concatenated per-item rewards (-chamfer_sym).
+def _compute_reward(out, w_chamfer, w_normal):
+    """Composite per-sample reward from a ChamferMetric(with_normals=True) output."""
+    return -(w_chamfer * out["chamfer_sym"] + w_normal * out["normal_sym"])
+
+
+def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, device,
+                    w_chamfer, w_normal):
+    """Run scenario for each pair, return concatenated per-item composite rewards.
 
     NOTE: cannot wrap the scenario call in torch.no_grad() because the scenario's
     inner SGD requires gradients on `deform`. Both LearnedMatcher and
@@ -72,12 +78,12 @@ def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, dev
         with torch.no_grad():
             out = chamfer((V_final, L_src_r, nv_src_r),
                           (V_tgt_r, L_tgt_r, nv_tgt_r))
-            rewards.append(-out["chamfer_sym"])
+            rewards.append(_compute_reward(out, w_chamfer, w_normal))
     return torch.cat(rewards) if rewards else torch.empty(0)
 
 
 def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M, device,
-              compare_to_knn: bool, eval_batch_size: int):
+              compare_to_knn: bool, eval_batch_size: int, w_chamfer: float, w_normal: float):
     """Argmax rollout on a held-out subset; optionally also Knn3dMatcher rollout."""
     eval_src = _build_eval_subset(ds_src, eval_cfg.get("num_samples"),
                                   eval_cfg.get("seed_src", 100))
@@ -92,14 +98,16 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
 
     feature_extractor.eval()
     learned = LearnedMatcher(feature_extractor)
-    R_learned = _rollout_reward(learned, scenario, chamfer, batches_src, batches_tgt, M, device)
+    R_learned = _rollout_reward(learned, scenario, chamfer, batches_src, batches_tgt, M, device,
+                                w_chamfer, w_normal)
     out = {
         "learned_reward_mean": float(R_learned.mean().item()),
         "learned_reward_std": float(R_learned.std().item() if R_learned.numel() > 1 else 0.0),
     }
     if compare_to_knn:
         knn = Knn3dMatcher(bidirectional=False)
-        R_knn = _rollout_reward(knn, scenario, chamfer, batches_src, batches_tgt, M, device)
+        R_knn = _rollout_reward(knn, scenario, chamfer, batches_src, batches_tgt, M, device,
+                                w_chamfer, w_normal)
         out["knn_reward_mean"] = float(R_knn.mean().item())
         out["knn_reward_std"] = float(R_knn.std().item() if R_knn.numel() > 1 else 0.0)
     else:
@@ -157,7 +165,10 @@ def train(cfg: DictConfig) -> str:
     scenario = instantiate(cfg.scenario)
 
     chamfer = ChamferMetric(num_samples=int(cfg.reward_num_samples),
-                            point_reduction="mean", norm=2, with_normals=False)
+                            point_reduction="mean", norm=2, with_normals=True)
+
+    w_chamfer = float(cfg.reward.w_chamfer)
+    w_normal = float(cfg.reward.w_normal)
 
     baseline = _Baseline(cfg.baseline)
 
@@ -192,6 +203,7 @@ def train(cfg: DictConfig) -> str:
             matcher.feature_extractor, eval_cfg, eval_ds_src, eval_ds_tgt,
             scenario, chamfer, int(cfg.M), device,
             eval_compare_to_knn, eval_batch_size,
+            w_chamfer, w_normal,
         )
         eval_logf.write(
             f"{step},{metrics['learned_reward_mean']:.6g},"
@@ -224,7 +236,11 @@ def train(cfg: DictConfig) -> str:
     _run_eval(0)
 
     with open(log_path, "w") as logf:
-        logf.write("step,traj,reward_mean,reward_std,loss,entropy,baseline\n")
+        logf.write(
+            "step,traj,reward_mean,reward_std,"
+            "reward_chamfer_mean,reward_normal_mean,"
+            "loss,entropy,baseline\n"
+        )
 
         pbar = tqdm(total=total_trajectories, desc="train", unit="traj")
         step = 0
@@ -252,7 +268,7 @@ def train(cfg: DictConfig) -> str:
             with torch.no_grad():
                 out = chamfer((V_final, L_src_r, nv_src_r),
                               (V_tgt_r, L_tgt_r, nv_tgt_r))
-                R = -out["chamfer_sym"]                       # (B,)
+                R = _compute_reward(out, w_chamfer, w_normal)  # (B,)
                 b = baseline(R)                                # (B,)
                 advantage = R - b
 
@@ -266,6 +282,8 @@ def train(cfg: DictConfig) -> str:
             logf.write(
                 f"{step},{traj},"
                 f"{R.mean().item():.6g},{R.std().item():.6g},"
+                f"{out['chamfer_sym'].mean().item():.6g},"
+                f"{out['normal_sym'].mean().item():.6g},"
                 f"{loss.item():.6g},{entropy.mean().item():.6g},"
                 f"{b[0].item():.6g}\n"
             )

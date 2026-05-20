@@ -35,6 +35,13 @@ baseline:
 # Number of points to sample from each polyline for the reward Chamfer.
 reward_num_samples: 8192
 
+# Composite reward weights. Reward = -(w_chamfer * chamfer_sym + w_normal * normal_sym).
+# chamfer_sym is squared-L2 in shape coords (~1e-3..1e-1); normal_sym is 1 - cos
+# of matched-pair normals in [0, 2]. Tune empirically; w_normal=0 disables.
+reward:
+  w_chamfer: 1.0
+  w_normal: 0.0
+
 optimizer:
   _target_: torch.optim.Adam
   lr: 1.0e-4
