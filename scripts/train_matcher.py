@@ -110,9 +110,17 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
                                 w_chamfer, w_normal)
         out["knn_reward_mean"] = float(R_knn.mean().item())
         out["knn_reward_std"] = float(R_knn.std().item() if R_knn.numel() > 1 else 0.0)
+
+        knn_bi = Knn3dMatcher(bidirectional=True)
+        R_knn_bi = _rollout_reward(knn_bi, scenario, chamfer, batches_src, batches_tgt, M,
+                                   device, w_chamfer, w_normal)
+        out["knn_bi_reward_mean"] = float(R_knn_bi.mean().item())
+        out["knn_bi_reward_std"] = float(R_knn_bi.std().item() if R_knn_bi.numel() > 1 else 0.0)
     else:
         out["knn_reward_mean"] = float("nan")
         out["knn_reward_std"] = float("nan")
+        out["knn_bi_reward_mean"] = float("nan")
+        out["knn_bi_reward_std"] = float("nan")
     feature_extractor.train()
     return out
 
@@ -189,7 +197,8 @@ def train(cfg: DictConfig) -> str:
     if eval_logf is not None:
         eval_logf.write(
             "step,learned_reward_mean,learned_reward_std,"
-            "knn_reward_mean,knn_reward_std\n"
+            "knn_reward_mean,knn_reward_std,"
+            "knn_bi_reward_mean,knn_bi_reward_std\n"
         )
         eval_ds_src = instantiate(cfg.eval.dataset_src.dataset)
         eval_ds_tgt = instantiate(cfg.eval.dataset_tgt.dataset)
@@ -209,12 +218,16 @@ def train(cfg: DictConfig) -> str:
             f"{step},{metrics['learned_reward_mean']:.6g},"
             f"{metrics['learned_reward_std']:.6g},"
             f"{metrics['knn_reward_mean']:.6g},"
-            f"{metrics['knn_reward_std']:.6g}\n"
+            f"{metrics['knn_reward_std']:.6g},"
+            f"{metrics['knn_bi_reward_mean']:.6g},"
+            f"{metrics['knn_bi_reward_std']:.6g}\n"
         )
         eval_logf.flush()
         tqdm.write(
             f"[eval @ step {step}] learned={metrics['learned_reward_mean']:.4f}"
-            + (f"  knn={metrics['knn_reward_mean']:.4f}" if eval_compare_to_knn else "")
+            + (f"  knn={metrics['knn_reward_mean']:.4f}"
+               f"  knn_bi={metrics['knn_bi_reward_mean']:.4f}"
+               if eval_compare_to_knn else "")
         )
 
     def _save_checkpoint(step):
