@@ -10,6 +10,7 @@ Per batch:
 
 Hydra entry; config at configs/train_matcher.yaml.
 """
+import copy
 import os
 
 import hydra
@@ -166,6 +167,23 @@ def train(cfg: DictConfig) -> str:
     # matcher's `feature_extractor` attribute is swapped for the compiled
     # wrapper so all forward calls (training + argmax eval) go through it.
     feature_extractor = matcher.feature_extractor
+
+    # SCST-style baseline: snapshot the initial extractor (frozen, deterministic
+    # argmax) as a state-conditional reference. Must be deep-copied BEFORE
+    # torch.compile so the prior is a clean uncompiled module that doesn't
+    # share weight tensors with the trainable matcher.
+    baseline_type = str(cfg.baseline.get("type", "none"))
+    ema_baseline = None
+    prior_matcher = None
+    if baseline_type == "prior":
+        prior_extractor = copy.deepcopy(feature_extractor)
+        for p in prior_extractor.parameters():
+            p.requires_grad = False
+        prior_matcher = LearnedMatcher(torch.compile(prior_extractor),
+                                       temperature=matcher.temperature)
+    else:
+        ema_baseline = _Baseline(cfg.baseline)
+
     matcher.feature_extractor = torch.compile(feature_extractor)
 
     optimizer = instantiate(cfg.optimizer, params=feature_extractor.parameters())
@@ -177,8 +195,6 @@ def train(cfg: DictConfig) -> str:
 
     w_chamfer = float(cfg.reward.w_chamfer)
     w_normal = float(cfg.reward.w_normal)
-
-    baseline = _Baseline(cfg.baseline)
 
     hydra_cfg = HydraConfig.get()
     output_dir = hydra_cfg.runtime.output_dir
@@ -282,10 +298,28 @@ def train(cfg: DictConfig) -> str:
                 out = chamfer((V_final, L_src_r, nv_src_r),
                               (V_tgt_r, L_tgt_r, nv_tgt_r))
                 R = _compute_reward(out, w_chamfer, w_normal)  # (B,)
-                b = baseline(R)                                # (B,)
-                advantage = R - b
 
-            loss = -(advantage.detach() * log_prob).mean() \
+            # Baseline: either scalar EMA (or zero) or per-state SCST rollout
+            # under the frozen prior policy. The prior rollout costs one extra
+            # scenario evaluation per step.
+            if prior_matcher is not None:
+                prior_matchings = prior_matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
+                V_final_prior = scenario.run(
+                    (V_src_r, L_src_r, nv_src_r),
+                    (V_tgt_r, L_tgt_r, nv_tgt_r),
+                    FixedMatcher(prior_matchings),
+                )
+                with torch.no_grad():
+                    out_prior = chamfer((V_final_prior, L_src_r, nv_src_r),
+                                        (V_tgt_r, L_tgt_r, nv_tgt_r))
+                    b = _compute_reward(out_prior, w_chamfer, w_normal)  # (B,)
+            else:
+                assert ema_baseline is not None
+                with torch.no_grad():
+                    b = ema_baseline(R)                                  # (B,)
+
+            advantage = (R - b).detach()
+            loss = -(advantage * log_prob).mean() \
                    - float(cfg.entropy_coef) * entropy.mean()
 
             optimizer.zero_grad()
@@ -298,7 +332,7 @@ def train(cfg: DictConfig) -> str:
                 f"{out['chamfer_sym'].mean().item():.6g},"
                 f"{out['normal_sym'].mean().item():.6g},"
                 f"{loss.item():.6g},{entropy.mean().item():.6g},"
-                f"{b[0].item():.6g}\n"
+                f"{b.mean().item():.6g}\n"
             )
             logf.flush()
 

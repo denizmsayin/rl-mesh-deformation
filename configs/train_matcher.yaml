@@ -25,12 +25,19 @@ M: 16
 # REINFORCE
 entropy_coef: 0.01
 
-# Baseline: type ∈ {none, ema}. EMA uses scalar running mean of batch rewards.
+# Baseline: type ∈ {none, ema, prior}.
+#   none  — zero baseline (raw REINFORCE).
+#   ema   — scalar running mean of batch rewards (variance reduction only).
+#   prior — per-state SCST baseline: at each step, also roll out the scenario
+#           with the frozen-at-step-0 policy's argmax matching and use that
+#           reward as the baseline. Costs one extra scenario rollout per step.
 # baseline:
 #   type: none
+# baseline:
+#   type: ema
+#   momentum: 0.90
 baseline:
-  type: ema
-  momentum: 0.90
+  type: prior
 
 # Number of points to sample from each polyline for the reward Chamfer.
 reward_num_samples: 8192
