@@ -59,11 +59,14 @@ optimizer:
 # for an on-the-fly baseline comparison.
 eval:
   every_steps: 500       # null disables periodic eval
-  num_samples: 64
+  num_samples: 256
   seed_src: 100
   seed_tgt: 101
   batch_size: 16
   compare_to_knn: true
+  # Number of sampled-rollout passes through the streamed-eval batch
+  # (averaged per-state). Reduces sampled-eval noise at proportional cost.
+  sampled_num_rollouts: 1
 
 hydra:
   job:

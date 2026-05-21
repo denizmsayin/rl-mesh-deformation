@@ -22,7 +22,27 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from rlmd.dataset import shape_collate_fn
-from rlmd.evaluation.matchers import FixedMatcher, Knn3dMatcher, LearnedMatcher
+from rlmd.evaluation.matchers import (
+    FixedMatcher,
+    Knn3dMatcher,
+    LearnedMatcher,
+    StochasticLearnedMatcher,
+)
+
+
+class _StochasticRolloutMatcher:
+    """Adapter so StochasticLearnedMatcher conforms to the deterministic
+    Matcher protocol (returns List[Matching] only). For sampled-eval rollouts
+    where log_prob and entropy are not needed."""
+
+    name = "stochastic_rollout"
+
+    def __init__(self, base: StochasticLearnedMatcher):
+        self._base = base
+
+    def __call__(self, V_src, n_src, V_tgt, n_tgt):
+        matchings, _lp, _ent = self._base(V_src, n_src, V_tgt, n_tgt)
+        return matchings
 from rlmd.evaluation.metrics import ChamferMetric
 from rlmd.ops import resample_uniform_polyline
 
@@ -118,6 +138,23 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
         out["stream_learned_reward_mean"] = float(R_stream_learned.mean().item())
         out["stream_learned_reward_std"] = float(
             R_stream_learned.std().item() if R_stream_learned.numel() > 1 else 0.0)
+
+        # Sampled rollout from the same policy: matches the distribution that
+        # REINFORCE actually optimizes (E_{c~π_θ}[R(c)]). Averaging over
+        # `sampled_num_rollouts` independent samples per state reduces noise.
+        n_samp = int(eval_cfg.get("sampled_num_rollouts", 1))
+        stoch = _StochasticRolloutMatcher(StochasticLearnedMatcher(feature_extractor))
+        n_samp = max(1, n_samp)
+        R_acc = _rollout_reward(stoch, scenario, chamfer, s_src, s_tgt, M, device,
+                                w_chamfer, w_normal)
+        for _ in range(n_samp - 1):
+            R_acc = R_acc + _rollout_reward(stoch, scenario, chamfer, s_src, s_tgt, M,
+                                            device, w_chamfer, w_normal)
+        R_stream_sampled = R_acc / n_samp
+        out["stream_sampled_reward_mean"] = float(R_stream_sampled.mean().item())
+        out["stream_sampled_reward_std"] = float(
+            R_stream_sampled.std().item() if R_stream_sampled.numel() > 1 else 0.0)
+
         if prior_matcher is not None:
             R_stream_prior = _rollout_reward(prior_matcher, scenario, chamfer, s_src, s_tgt, M,
                                              device, w_chamfer, w_normal)
@@ -130,6 +167,8 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
     else:
         out["stream_learned_reward_mean"] = float("nan")
         out["stream_learned_reward_std"] = float("nan")
+        out["stream_sampled_reward_mean"] = float("nan")
+        out["stream_sampled_reward_std"] = float("nan")
         out["stream_prior_reward_mean"] = float("nan")
         out["stream_prior_reward_std"] = float("nan")
     if compare_to_knn:
@@ -198,6 +237,12 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     R = np.array([float(r["reward_mean"]) for r in rows])
     b = np.array([float(r["baseline"]) for r in rows])
     adv = np.array([float(r["advantage_mean"]) for r in rows])
+    R_argmax = None
+    if "argmax_reward_mean" in rows[0]:
+        try:
+            R_argmax = np.array([float(r["argmax_reward_mean"]) for r in rows])
+        except (KeyError, ValueError):
+            R_argmax = None
 
     def _smooth(x):
         w = max(1, min(200, len(x) // 20))
@@ -213,7 +258,7 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     # top panel. Lives on the same y-scale as the training reward so direct
     # overlay makes sense.
     eval_log_path = os.path.join(os.path.dirname(log_path), "eval_log.csv")
-    eval_step = eval_stream_learned = eval_stream_prior = None
+    eval_step = eval_stream_learned = eval_stream_prior = eval_stream_sampled = None
     if os.path.exists(eval_log_path):
         e_rows = []
         with open(eval_log_path) as f:
@@ -231,20 +276,34 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
                 [_maybe_float(r["stream_learned_reward_mean"]) for r in e_rows])
             eval_stream_prior = np.array(
                 [_maybe_float(r["stream_prior_reward_mean"]) for r in e_rows])
+            if "stream_sampled_reward_mean" in e_rows[0]:
+                eval_stream_sampled = np.array(
+                    [_maybe_float(r["stream_sampled_reward_mean"]) for r in e_rows])
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
-    axes[0].plot(step, R, color="C0", alpha=0.25, lw=0.6, label="reward (raw)")
+    axes[0].plot(step, R, color="C0", alpha=0.25, lw=0.6,
+                 label="reward sampled (raw)")
     axes[0].plot(step, b, color="C1", alpha=0.25, lw=0.6,
                  label=f"baseline ({baseline_type}) (raw)")
     R_s, R_x = _smooth(R)
     b_s, b_x = _smooth(b)
-    axes[0].plot(step[R_x], R_s, color="C0", lw=1.5, label="reward (smoothed)")
+    axes[0].plot(step[R_x], R_s, color="C0", lw=1.5,
+                 label="reward sampled (smoothed)")
     axes[0].plot(step[b_x], b_s, color="C1", lw=1.5, label="baseline (smoothed)")
+    if R_argmax is not None:
+        axes[0].plot(step, R_argmax, color="C4", alpha=0.25, lw=0.6,
+                     label="reward argmax (raw)")
+        Ra_s, Ra_x = _smooth(R_argmax)
+        axes[0].plot(step[Ra_x], Ra_s, color="C4", lw=1.5,
+                     label="reward argmax (smoothed)")
     if eval_step is not None and eval_stream_learned is not None and np.isfinite(
             eval_stream_learned).any():
         axes[0].plot(eval_step, eval_stream_learned, "o-", color="C0",
-                     markersize=4, lw=0.8, label="stream eval learned")
+                     markersize=4, lw=0.8, label="stream eval learned (argmax)")
+        if eval_stream_sampled is not None and np.isfinite(eval_stream_sampled).any():
+            axes[0].plot(eval_step, eval_stream_sampled, "s--", color="C4",
+                         markersize=4, lw=0.8, label="stream eval learned (sampled)")
         if eval_stream_prior is not None and np.isfinite(eval_stream_prior).any():
             axes[0].plot(eval_step, eval_stream_prior, "o-", color="C1",
                          markersize=4, lw=0.8, label="stream eval prior")
@@ -253,16 +312,29 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     axes[0].grid(alpha=0.2)
 
     axes[1].axhline(0.0, color="k", lw=0.6, alpha=0.5)
-    axes[1].plot(step, adv, color="C2", alpha=0.25, lw=0.6, label="advantage (raw)")
+    axes[1].plot(step, adv, color="C2", alpha=0.25, lw=0.6,
+                 label="advantage sampled (raw)")
     adv_s, adv_x = _smooth(adv)
-    axes[1].plot(step[adv_x], adv_s, color="C2", lw=1.5, label="advantage (smoothed)")
+    axes[1].plot(step[adv_x], adv_s, color="C2", lw=1.5,
+                 label="advantage sampled (smoothed)")
+    if R_argmax is not None:
+        adv_argmax = R_argmax - b
+        axes[1].plot(step, adv_argmax, color="C4", alpha=0.25, lw=0.6,
+                     label="advantage argmax (raw)")
+        aa_s, aa_x = _smooth(adv_argmax)
+        axes[1].plot(step[aa_x], aa_s, color="C4", lw=1.5,
+                     label="advantage argmax (smoothed)")
     if (eval_step is not None and eval_stream_learned is not None
             and eval_stream_prior is not None
             and np.isfinite(eval_stream_learned).any()
             and np.isfinite(eval_stream_prior).any()):
         axes[1].plot(eval_step, eval_stream_learned - eval_stream_prior, "o-",
                      color="C3", markersize=4, lw=0.8,
-                     label="stream eval advantage")
+                     label="stream eval advantage (argmax)")
+        if eval_stream_sampled is not None and np.isfinite(eval_stream_sampled).any():
+            axes[1].plot(eval_step, eval_stream_sampled - eval_stream_prior, "s--",
+                         color="C4", markersize=4, lw=0.8,
+                         label="stream eval advantage (sampled)")
     axes[1].set_ylabel("advantage (R - baseline)")
     axes[1].set_xlabel("step")
     axes[1].legend(loc="best", fontsize=8)
@@ -308,6 +380,14 @@ def train(cfg: DictConfig) -> str:
 
     matcher.feature_extractor = torch.compile(feature_extractor)
 
+    # Argmax view of the *current* policy, for the inline diagnostic rollout
+    # at each training step. Constructed once: LearnedMatcher's __init__ flips
+    # the extractor to eval mode, so we restore train mode immediately. Future
+    # __call__ invocations don't touch the mode.
+    policy_argmax_matcher = LearnedMatcher(matcher.feature_extractor,
+                                           temperature=matcher.temperature)
+    feature_extractor.train()
+
     optimizer = instantiate(cfg.optimizer, params=feature_extractor.parameters())
 
     scenario = instantiate(cfg.scenario)
@@ -339,6 +419,7 @@ def train(cfg: DictConfig) -> str:
             "knn_reward_mean,knn_reward_std,"
             "knn_bi_reward_mean,knn_bi_reward_std,"
             "stream_learned_reward_mean,stream_learned_reward_std,"
+            "stream_sampled_reward_mean,stream_sampled_reward_std,"
             "stream_prior_reward_mean,stream_prior_reward_std\n"
         )
         eval_ds_src = instantiate(cfg.eval.dataset_src.dataset)
@@ -383,6 +464,8 @@ def train(cfg: DictConfig) -> str:
             f"{metrics['knn_bi_reward_std']:.6g},"
             f"{metrics['stream_learned_reward_mean']:.6g},"
             f"{metrics['stream_learned_reward_std']:.6g},"
+            f"{metrics['stream_sampled_reward_mean']:.6g},"
+            f"{metrics['stream_sampled_reward_std']:.6g},"
             f"{metrics['stream_prior_reward_mean']:.6g},"
             f"{metrics['stream_prior_reward_std']:.6g}\n"
         )
@@ -392,7 +475,8 @@ def train(cfg: DictConfig) -> str:
             msg += (f"  knn={metrics['knn_reward_mean']:.4f}"
                     f"  knn_bi={metrics['knn_bi_reward_mean']:.4f}")
         if streamed_eval_batches is not None:
-            msg += f"  stream={metrics['stream_learned_reward_mean']:.4f}"
+            msg += (f"  stream={metrics['stream_learned_reward_mean']:.4f}"
+                    f"  stream_samp={metrics['stream_sampled_reward_mean']:.4f}")
             if prior_matcher is not None:
                 msg += f"  stream_prior={metrics['stream_prior_reward_mean']:.4f}"
         tqdm.write(msg)
@@ -420,6 +504,7 @@ def train(cfg: DictConfig) -> str:
             "step,traj,reward_mean,reward_std,"
             "reward_chamfer_mean,reward_normal_mean,"
             "advantage_mean,advantage_std,"
+            "argmax_reward_mean,argmax_reward_std,"
             "loss,entropy,baseline\n"
         )
 
@@ -451,6 +536,23 @@ def train(cfg: DictConfig) -> str:
                               (V_tgt_r, L_tgt_r, nv_tgt_r))
                 R = _compute_reward(out, w_chamfer, w_normal)  # (B,)
 
+            # Diagnostic: rollout the policy's *argmax* matching on the same
+            # batch. Not used for the loss — just a logged signal so we can
+            # compare argmax-π_θ vs sampled-π_θ vs argmax-π_0 (baseline) on
+            # the same batch. One extra scenario rollout per training step.
+            with torch.no_grad():
+                policy_argmax_matchings = policy_argmax_matcher(
+                    V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
+            V_final_argmax = scenario.run(
+                (V_src_r, L_src_r, nv_src_r),
+                (V_tgt_r, L_tgt_r, nv_tgt_r),
+                FixedMatcher(policy_argmax_matchings),
+            )
+            with torch.no_grad():
+                out_argmax = chamfer((V_final_argmax, L_src_r, nv_src_r),
+                                     (V_tgt_r, L_tgt_r, nv_tgt_r))
+                R_argmax = _compute_reward(out_argmax, w_chamfer, w_normal)  # (B,)
+
             # Baseline: either scalar EMA (or zero) or per-state SCST rollout
             # under the frozen prior policy. The prior rollout costs one extra
             # scenario evaluation per step.
@@ -479,12 +581,15 @@ def train(cfg: DictConfig) -> str:
             optimizer.step()
 
             adv_std = advantage.std().item() if advantage.numel() > 1 else 0.0
+            argmax_std = (R_argmax.std().item()
+                          if R_argmax.numel() > 1 else 0.0)
             logf.write(
                 f"{step},{traj},"
                 f"{R.mean().item():.6g},{R.std().item():.6g},"
                 f"{out['chamfer_sym'].mean().item():.6g},"
                 f"{out['normal_sym'].mean().item():.6g},"
                 f"{advantage.mean().item():.6g},{adv_std:.6g},"
+                f"{R_argmax.mean().item():.6g},{argmax_std:.6g},"
                 f"{loss.item():.6g},{entropy.mean().item():.6g},"
                 f"{b.mean().item():.6g}\n"
             )
