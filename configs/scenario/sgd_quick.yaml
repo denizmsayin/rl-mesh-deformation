@@ -2,7 +2,7 @@ _target_: rlmd.evaluation.scenarios.SgdScenario
 name: sgd_quick
 num_iters: 100
 num_samples: 200
-lr: 1.0
+lr: 0.0625    # per-item; loss ops sum over batch (see rlmd/ops/distance.py), so lr is batch-size-invariant
 momentum: 0.9
 w_chamfer: 1.0
 w_edge: 1.0

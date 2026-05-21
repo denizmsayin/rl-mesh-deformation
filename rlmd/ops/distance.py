@@ -59,7 +59,13 @@ def distance_loss(P_src, P_tgt, matchings, p=2):
 
     For each Matching m, computes mean over valid pairs of
         sum_d |P_src[i,d] - P_tgt[j,d]|^p,
-    averaged over batch. Returns the mean across matchings.
+    summed over batch. Returns the mean across matchings.
+
+    Sum (not mean) over batch is intentional: this loss is consumed by inner-
+    SGD scenarios that treat each item as an independent optimization with its
+    own slice of `deform`. Batch-mean would make the effective per-item step
+    size scale with 1/B, coupling the scenario behavior to batch size. If you
+    want a batch-mean for reporting, divide by B at the call site.
 
     p=2 gives squared-L2 (matches pytorch3d chamfer default). p=1 gives L1.
 
@@ -82,6 +88,6 @@ def distance_loss(P_src, P_tgt, matchings, p=2):
         dist = (a - b).abs().pow(p).sum(dim=-1)
         mask = m.mask.to(dist.dtype)
         per_item = (dist * mask).sum(dim=-1) / mask.sum(dim=-1)
-        losses.append(per_item.mean())
+        losses.append(per_item.sum())
 
     return sum(losses) / len(losses)

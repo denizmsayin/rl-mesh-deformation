@@ -14,6 +14,7 @@ def test_self_distance_is_zero():
 
 def test_matches_pytorch3d_chamfer():
     # pytorch3d chamfer is (dir1 + dir2); ours is (dir1 + dir2) / 2.
+    # We sum over batch; pytorch3d means. So 2 * ours / B == ref.
     torch.manual_seed(0)
     B, N_s, N_t, D = 3, 120, 150, 2
     P_src = torch.randn(B, N_s, D)
@@ -29,7 +30,7 @@ def test_matches_pytorch3d_chamfer():
         x_lengths=n_src, y_lengths=n_tgt,
         batch_reduction='mean', point_reduction='mean',
     )
-    torch.testing.assert_close(2 * ours, ref)
+    torch.testing.assert_close(2 * ours / B, ref)
 
 
 def test_unidirectional_returns_single_matching():

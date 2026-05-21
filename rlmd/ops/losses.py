@@ -5,6 +5,9 @@ def polyline_edge_loss(V, L, num_verts, target_length=0.0):
     """
     Mean squared deviation of edge length from a target length.
 
+    Sum (not mean) over batch is intentional — see the note in
+    ``rlmd.ops.distance.distance_loss``.
+
     Args:
         V: (B, N_max, 2) float.
         L: (B, M_max, 2) long, padded with (0, 0).
@@ -12,7 +15,7 @@ def polyline_edge_loss(V, L, num_verts, target_length=0.0):
         target_length: desired edge length. 0.0 shrinks edges.
 
     Returns:
-        scalar loss, averaged per item then over batch.
+        scalar loss, averaged per item then summed over batch.
     """
     B, M_max, _ = L.shape
     batch = torch.arange(B, device=V.device)[:, None]
@@ -24,14 +27,16 @@ def polyline_edge_loss(V, L, num_verts, target_length=0.0):
     mask = torch.arange(M_max, device=V.device)[None, :] < num_verts[:, None]
 
     loss = ((lengths - target_length) ** 2) * mask
-    return (loss.sum(dim=-1) / num_verts).mean()
+    return (loss.sum(dim=-1) / num_verts).sum()
 
 
 def polyline_laplacian_smoothing(V, L, num_verts):
     """
     Uniform-Laplacian smoothing loss. For each vertex v_i with neighbors S(i),
-    computes ||v_i - mean(v_j for j in S(i))|| and averages per item then over
-    batch. Matches pytorch3d's mesh_laplacian_smoothing(method='uniform').
+    computes ||v_i - mean(v_j for j in S(i))||, averages per item, then sums
+    over batch. Matches pytorch3d's mesh_laplacian_smoothing(method='uniform')
+    up to the batch reduction (we sum, they mean — see note in
+    ``rlmd.ops.distance.distance_loss``).
 
     Args:
         V: (B, N_max, 2) float.
@@ -65,7 +70,7 @@ def polyline_laplacian_smoothing(V, L, num_verts):
     delta = V - neighbor_sum / degree.clamp(min=1.0).unsqueeze(-1)
     loss = delta.norm(dim=-1)
 
-    return (loss.sum(dim=-1) / num_verts).mean()
+    return (loss.sum(dim=-1) / num_verts).sum()
 
 
 def polyline_normal_consistency(V, L, num_verts):
@@ -74,6 +79,8 @@ def polyline_normal_consistency(V, L, num_verts):
     the incoming and outgoing edge directions via 1 - cos(d_in, d_out).
     Equivalent to comparing edge normals (rotating both by 90° preserves cos).
     Assumes L is consistently oriented.
+
+    Sum (not mean) over batch — see note in ``rlmd.ops.distance.distance_loss``.
 
     Args:
         V: (B, N_max, 2) float.
@@ -103,4 +110,4 @@ def polyline_normal_consistency(V, L, num_verts):
     vert_mask = torch.arange(N_max, device=V.device)[None, :] < num_verts[:, None]
     loss = (1 - cos) * vert_mask
 
-    return (loss.sum(dim=-1) / num_verts).mean()
+    return (loss.sum(dim=-1) / num_verts).sum()

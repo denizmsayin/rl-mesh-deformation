@@ -21,7 +21,7 @@ NUM_POINTS = 60
 NUM_SAMPLES = 500
 TARGET_SHAPE = 'star'
 TRANSLATION_RADIUS = 5
-LR = 1.0
+LR = 0.1   # per-item; loss ops sum over batch, so lr is batch-size-invariant
 MOMENTUM = 0.9
 
 W_CHAMFER = 1.0
