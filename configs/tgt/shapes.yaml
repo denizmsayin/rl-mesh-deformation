@@ -1,0 +1,4 @@
+# @package _global_
+defaults:
+  - /dataset_tgt: shapes_stream
+  - /dataset_tgt@eval.dataset_tgt: shapes_set

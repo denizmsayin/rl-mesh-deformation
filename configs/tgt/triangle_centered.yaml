@@ -1,0 +1,4 @@
+# @package _global_
+defaults:
+  - /dataset_tgt: triangle_centered_stream
+  - /dataset_tgt@eval.dataset_tgt: triangle_centered_set

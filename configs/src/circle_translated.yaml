@@ -1,0 +1,4 @@
+# @package _global_
+defaults:
+  - /dataset_src: circle_translated_stream
+  - /dataset_src@eval.dataset_src: circle_translated_set

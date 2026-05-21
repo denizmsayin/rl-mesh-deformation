@@ -1,12 +1,8 @@
 defaults:
-  - dataset_src: circle_centered_stream
-  - dataset_tgt: triangle_centered_stream
+  - src: circle_centered
+  - tgt: triangle_centered
   - matcher: learned_stochastic
   - scenario: sgd_fixed_match
-  # Held-out fixed disk datasets for periodic eval. Package overrides drop the
-  # disk configs under `eval.dataset_src` / `eval.dataset_tgt`.
-  - /dataset_src@eval.dataset_src: circle_centered_set
-  - /dataset_tgt@eval.dataset_tgt: triangle_centered_set
   - _self_
 
 device: auto

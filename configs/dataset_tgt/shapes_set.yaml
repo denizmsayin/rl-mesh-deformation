@@ -1,0 +1,6 @@
+name: shapes_set
+dataset:
+  _target_: rlmd.dataset.ShapeDiskDataset
+  dataset_folder: ${oc.env:RLMD_DATASET,data_generation/generated_dataset}/shapes_set
+  shape_names: ["circle", "hexagon", "triangle", "star_5"]
+  cache_size: 8
