@@ -376,14 +376,6 @@ def train(cfg: DictConfig) -> str:
 
     matcher.feature_extractor = torch.compile(feature_extractor)
 
-    # Argmax view of the *current* policy, for the inline diagnostic rollout
-    # at each training step. Constructed once: LearnedMatcher's __init__ flips
-    # the extractor to eval mode, so we restore train mode immediately. Future
-    # __call__ invocations don't touch the mode.
-    policy_argmax_matcher = LearnedMatcher(matcher.feature_extractor,
-                                           temperature=matcher.temperature)
-    feature_extractor.train()
-
     optimizer = instantiate(cfg.optimizer, params=feature_extractor.parameters())
 
     scenario = instantiate(cfg.scenario)
@@ -500,7 +492,6 @@ def train(cfg: DictConfig) -> str:
             "step,traj,reward_mean,reward_std,"
             "reward_chamfer_mean,reward_normal_mean,"
             "advantage_mean,advantage_std,"
-            "argmax_reward_mean,argmax_reward_std,"
             "loss,entropy,baseline\n"
         )
 
@@ -532,23 +523,6 @@ def train(cfg: DictConfig) -> str:
                               (V_tgt_r, L_tgt_r, nv_tgt_r))
                 R = _compute_reward(out, w_chamfer, w_normal)  # (B,)
 
-            # Diagnostic: rollout the policy's *argmax* matching on the same
-            # batch. Not used for the loss — just a logged signal so we can
-            # compare argmax-π_θ vs sampled-π_θ vs argmax-π_0 (baseline) on
-            # the same batch. One extra scenario rollout per training step.
-            with torch.no_grad():
-                policy_argmax_matchings = policy_argmax_matcher(
-                    V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
-            V_final_argmax = scenario.run(
-                (V_src_r, L_src_r, nv_src_r),
-                (V_tgt_r, L_tgt_r, nv_tgt_r),
-                FixedMatcher(policy_argmax_matchings),
-            )
-            with torch.no_grad():
-                out_argmax = chamfer((V_final_argmax, L_src_r, nv_src_r),
-                                     (V_tgt_r, L_tgt_r, nv_tgt_r))
-                R_argmax = _compute_reward(out_argmax, w_chamfer, w_normal)  # (B,)
-
             # Baseline: either scalar EMA (or zero) or per-state SCST rollout
             # under the frozen prior policy. The prior rollout costs one extra
             # scenario evaluation per step.
@@ -577,15 +551,12 @@ def train(cfg: DictConfig) -> str:
             optimizer.step()
 
             adv_std = advantage.std().item() if advantage.numel() > 1 else 0.0
-            argmax_std = (R_argmax.std().item()
-                          if R_argmax.numel() > 1 else 0.0)
             logf.write(
                 f"{step},{traj},"
                 f"{R.mean().item():.6g},{R.std().item():.6g},"
                 f"{out['chamfer_sym'].mean().item():.6g},"
                 f"{out['normal_sym'].mean().item():.6g},"
                 f"{advantage.mean().item():.6g},{adv_std:.6g},"
-                f"{R_argmax.mean().item():.6g},{argmax_std:.6g},"
                 f"{loss.item():.6g},{entropy.mean().item():.6g},"
                 f"{b.mean().item():.6g}\n"
             )
