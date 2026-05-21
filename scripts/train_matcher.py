@@ -105,12 +105,15 @@ def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, dev
 
 def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M, device,
               compare_to_knn: bool, eval_batch_size: int, w_chamfer: float, w_normal: float,
-              streamed_batches=None, prior_matcher=None):
+              streamed_batches=None, prior_matcher=None,
+              baseline_scenario=None, baseline_matcher=None):
     """Argmax rollout on a held-out subset; optionally also Knn3dMatcher rollout.
 
     If ``streamed_batches`` is given as a (list[batch_src], list[batch_tgt]) pair,
     also run learned + prior rollouts on it for an in-training-distribution
-    diagnostic. If ``prior_matcher`` is also given, its rollout is reported.
+    diagnostic. If ``prior_matcher`` is also given, its rollout is reported. If
+    ``baseline_scenario`` + ``baseline_matcher`` are given (chamfer_sgd
+    baseline), that scenario is also rolled out on the streamed batch.
     """
     eval_src = _build_eval_subset(ds_src, eval_cfg.get("num_samples"),
                                   eval_cfg.get("seed_src", 100))
@@ -164,6 +167,18 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
         else:
             out["stream_prior_reward_mean"] = float("nan")
             out["stream_prior_reward_std"] = float("nan")
+
+        if baseline_scenario is not None and baseline_matcher is not None:
+            R_stream_baseline = _rollout_reward(
+                baseline_matcher, baseline_scenario, chamfer, s_src, s_tgt, M,
+                device, w_chamfer, w_normal,
+            )
+            out["stream_baseline_reward_mean"] = float(R_stream_baseline.mean().item())
+            out["stream_baseline_reward_std"] = float(
+                R_stream_baseline.std().item() if R_stream_baseline.numel() > 1 else 0.0)
+        else:
+            out["stream_baseline_reward_mean"] = float("nan")
+            out["stream_baseline_reward_std"] = float("nan")
     else:
         out["stream_learned_reward_mean"] = float("nan")
         out["stream_learned_reward_std"] = float("nan")
@@ -171,6 +186,8 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
         out["stream_sampled_reward_std"] = float("nan")
         out["stream_prior_reward_mean"] = float("nan")
         out["stream_prior_reward_std"] = float("nan")
+        out["stream_baseline_reward_mean"] = float("nan")
+        out["stream_baseline_reward_std"] = float("nan")
     if compare_to_knn:
         knn = Knn3dMatcher(bidirectional=False)
         R_knn = _rollout_reward(knn, scenario, chamfer, batches_src, batches_tgt, M, device,
@@ -193,7 +210,10 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
 
 
 class _Baseline:
-    """Scalar baseline applied to (B,) rewards. Supported types: 'none', 'ema'."""
+    """Scalar baseline applied to (B,) rewards. Supported types: 'none', 'ema'.
+
+    Other baseline types ('prior', 'chamfer_sgd') are handled inline in the
+    train loop because they need per-state rollouts."""
 
     def __init__(self, cfg: DictConfig):
         self.type = str(cfg.get("type", "none"))
@@ -201,7 +221,7 @@ class _Baseline:
             self.momentum = float(cfg.get("momentum", 0.99))
             self.value = None
         elif self.type != "none":
-            raise ValueError(f"unknown baseline type: {self.type!r}")
+            raise ValueError(f"unknown scalar-baseline type: {self.type!r}")
 
     def __call__(self, R: torch.Tensor) -> torch.Tensor:
         if self.type == "none":
@@ -259,6 +279,7 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     # overlay makes sense.
     eval_log_path = os.path.join(os.path.dirname(log_path), "eval_log.csv")
     eval_step = eval_stream_learned = eval_stream_prior = eval_stream_sampled = None
+    eval_stream_baseline = None
     if os.path.exists(eval_log_path):
         e_rows = []
         with open(eval_log_path) as f:
@@ -279,6 +300,9 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
             if "stream_sampled_reward_mean" in e_rows[0]:
                 eval_stream_sampled = np.array(
                     [_maybe_float(r["stream_sampled_reward_mean"]) for r in e_rows])
+            if "stream_baseline_reward_mean" in e_rows[0]:
+                eval_stream_baseline = np.array(
+                    [_maybe_float(r["stream_baseline_reward_mean"]) for r in e_rows])
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
@@ -305,6 +329,9 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
         if eval_stream_prior is not None and np.isfinite(eval_stream_prior).any():
             axes[0].plot(eval_step, eval_stream_prior, "o-", color="C1",
                          markersize=4, lw=0.8, label="stream eval prior")
+        if eval_stream_baseline is not None and np.isfinite(eval_stream_baseline).any():
+            axes[0].plot(eval_step, eval_stream_baseline, "o-", color="C5",
+                         markersize=4, lw=0.8, label="stream eval chamfer_sgd")
     axes[0].set_ylabel("reward")
     axes[0].legend(loc="best", fontsize=8)
     axes[0].grid(alpha=0.2)
@@ -320,15 +347,22 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
         aa_s, aa_x = _smooth(adv_argmax)
         axes[1].plot(step[aa_x], aa_s, color="C4", lw=1.5,
                      label="advantage argmax")
+    # Pick whichever per-state baseline is populated for the streamed-eval
+    # advantage overlay. Prior and chamfer_sgd are mutually exclusive at
+    # training time, so at most one of these is finite.
+    eval_stream_b = None
+    if eval_stream_prior is not None and np.isfinite(eval_stream_prior).any():
+        eval_stream_b = eval_stream_prior
+    elif eval_stream_baseline is not None and np.isfinite(eval_stream_baseline).any():
+        eval_stream_b = eval_stream_baseline
     if (eval_step is not None and eval_stream_learned is not None
-            and eval_stream_prior is not None
-            and np.isfinite(eval_stream_learned).any()
-            and np.isfinite(eval_stream_prior).any()):
-        axes[1].plot(eval_step, eval_stream_learned - eval_stream_prior, "o-",
+            and eval_stream_b is not None
+            and np.isfinite(eval_stream_learned).any()):
+        axes[1].plot(eval_step, eval_stream_learned - eval_stream_b, "o-",
                      color="C3", markersize=4, lw=0.8,
                      label="stream eval advantage (argmax)")
         if eval_stream_sampled is not None and np.isfinite(eval_stream_sampled).any():
-            axes[1].plot(eval_step, eval_stream_sampled - eval_stream_prior, "s--",
+            axes[1].plot(eval_step, eval_stream_sampled - eval_stream_b, "s--",
                          color="C4", markersize=4, lw=0.8,
                          label="stream eval advantage (sampled)")
     axes[1].set_ylabel("advantage (R - baseline)")
@@ -365,12 +399,22 @@ def train(cfg: DictConfig) -> str:
     baseline_type = str(cfg.baseline.get("type", "none"))
     ema_baseline = None
     prior_matcher = None
+    baseline_scenario = None
+    baseline_matcher = None
     if baseline_type == "prior":
         prior_extractor = copy.deepcopy(feature_extractor)
         for p in prior_extractor.parameters():
             p.requires_grad = False
         prior_matcher = LearnedMatcher(torch.compile(prior_extractor),
                                        temperature=matcher.temperature)
+    elif baseline_type == "chamfer_sgd":
+        # Per-state baseline: at each step, run a separate (full-chamfer) SGD
+        # scenario — typically rlmd.evaluation.scenarios.SgdScenario with a
+        # Knn3dMatcher — and use the resulting composite reward as b. Strictly
+        # stronger than `prior` (this baseline keeps re-matching points across
+        # iterations) but each step pays a full inner SGD rollout.
+        baseline_scenario = instantiate(cfg.baseline.scenario)
+        baseline_matcher = instantiate(cfg.baseline.matcher)
     else:
         ema_baseline = _Baseline(cfg.baseline)
 
@@ -408,7 +452,8 @@ def train(cfg: DictConfig) -> str:
             "knn_bi_reward_mean,knn_bi_reward_std,"
             "stream_learned_reward_mean,stream_learned_reward_std,"
             "stream_sampled_reward_mean,stream_sampled_reward_std,"
-            "stream_prior_reward_mean,stream_prior_reward_std\n"
+            "stream_prior_reward_mean,stream_prior_reward_std,"
+            "stream_baseline_reward_mean,stream_baseline_reward_std\n"
         )
         eval_ds_src = instantiate(cfg.eval.dataset_src.dataset)
         eval_ds_tgt = instantiate(cfg.eval.dataset_tgt.dataset)
@@ -442,6 +487,8 @@ def train(cfg: DictConfig) -> str:
             w_chamfer, w_normal,
             streamed_batches=streamed_eval_batches,
             prior_matcher=prior_matcher,
+            baseline_scenario=baseline_scenario,
+            baseline_matcher=baseline_matcher,
         )
         eval_logf.write(
             f"{step},{metrics['learned_reward_mean']:.6g},"
@@ -455,7 +502,9 @@ def train(cfg: DictConfig) -> str:
             f"{metrics['stream_sampled_reward_mean']:.6g},"
             f"{metrics['stream_sampled_reward_std']:.6g},"
             f"{metrics['stream_prior_reward_mean']:.6g},"
-            f"{metrics['stream_prior_reward_std']:.6g}\n"
+            f"{metrics['stream_prior_reward_std']:.6g},"
+            f"{metrics['stream_baseline_reward_mean']:.6g},"
+            f"{metrics['stream_baseline_reward_std']:.6g}\n"
         )
         eval_logf.flush()
         msg = f"[eval @ step {step}] learned={metrics['learned_reward_mean']:.4f}"
@@ -467,6 +516,8 @@ def train(cfg: DictConfig) -> str:
                     f"  stream_samp={metrics['stream_sampled_reward_mean']:.4f}")
             if prior_matcher is not None:
                 msg += f"  stream_prior={metrics['stream_prior_reward_mean']:.4f}"
+            if baseline_scenario is not None:
+                msg += f"  stream_baseline={metrics['stream_baseline_reward_mean']:.4f}"
         tqdm.write(msg)
 
     def _save_checkpoint(step):
@@ -523,9 +574,10 @@ def train(cfg: DictConfig) -> str:
                               (V_tgt_r, L_tgt_r, nv_tgt_r))
                 R = _compute_reward(out, w_chamfer, w_normal)  # (B,)
 
-            # Baseline: either scalar EMA (or zero) or per-state SCST rollout
-            # under the frozen prior policy. The prior rollout costs one extra
-            # scenario evaluation per step.
+            # Baseline: scalar EMA (or zero), per-state SCST under the frozen
+            # prior policy, or per-state full-chamfer SGD rollout. The two
+            # per-state options each cost one extra scenario evaluation per
+            # step (chamfer_sgd is typically the more expensive of the two).
             if prior_matcher is not None:
                 prior_matchings = prior_matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
                 V_final_prior = scenario.run(
@@ -537,6 +589,16 @@ def train(cfg: DictConfig) -> str:
                     out_prior = chamfer((V_final_prior, L_src_r, nv_src_r),
                                         (V_tgt_r, L_tgt_r, nv_tgt_r))
                     b = _compute_reward(out_prior, w_chamfer, w_normal)  # (B,)
+            elif baseline_scenario is not None:
+                V_final_b = baseline_scenario.run(
+                    (V_src_r, L_src_r, nv_src_r),
+                    (V_tgt_r, L_tgt_r, nv_tgt_r),
+                    baseline_matcher,
+                )
+                with torch.no_grad():
+                    out_b = chamfer((V_final_b, L_src_r, nv_src_r),
+                                    (V_tgt_r, L_tgt_r, nv_tgt_r))
+                    b = _compute_reward(out_b, w_chamfer, w_normal)      # (B,)
             else:
                 assert ema_baseline is not None
                 with torch.no_grad():
