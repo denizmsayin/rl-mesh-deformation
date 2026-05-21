@@ -282,21 +282,19 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
-    axes[0].plot(step, R, color="C0", alpha=0.25, lw=0.6,
-                 label="reward sampled (raw)")
-    axes[0].plot(step, b, color="C1", alpha=0.25, lw=0.6,
-                 label=f"baseline ({baseline_type}) (raw)")
+    axes[0].plot(step, R, color="C0", alpha=0.25, lw=0.6)
+    axes[0].plot(step, b, color="C1", alpha=0.25, lw=0.6)
     R_s, R_x = _smooth(R)
     b_s, b_x = _smooth(b)
     axes[0].plot(step[R_x], R_s, color="C0", lw=1.5,
-                 label="reward sampled (smoothed)")
-    axes[0].plot(step[b_x], b_s, color="C1", lw=1.5, label="baseline (smoothed)")
+                 label="reward sampled")
+    axes[0].plot(step[b_x], b_s, color="C1", lw=1.5,
+                 label=f"baseline ({baseline_type})")
     if R_argmax is not None:
-        axes[0].plot(step, R_argmax, color="C4", alpha=0.25, lw=0.6,
-                     label="reward argmax (raw)")
+        axes[0].plot(step, R_argmax, color="C4", alpha=0.25, lw=0.6)
         Ra_s, Ra_x = _smooth(R_argmax)
         axes[0].plot(step[Ra_x], Ra_s, color="C4", lw=1.5,
-                     label="reward argmax (smoothed)")
+                     label="reward argmax")
     if eval_step is not None and eval_stream_learned is not None and np.isfinite(
             eval_stream_learned).any():
         axes[0].plot(eval_step, eval_stream_learned, "o-", color="C0",
@@ -312,18 +310,16 @@ def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> N
     axes[0].grid(alpha=0.2)
 
     axes[1].axhline(0.0, color="k", lw=0.6, alpha=0.5)
-    axes[1].plot(step, adv, color="C2", alpha=0.25, lw=0.6,
-                 label="advantage sampled (raw)")
+    axes[1].plot(step, adv, color="C2", alpha=0.25, lw=0.6)
     adv_s, adv_x = _smooth(adv)
     axes[1].plot(step[adv_x], adv_s, color="C2", lw=1.5,
-                 label="advantage sampled (smoothed)")
+                 label="advantage sampled")
     if R_argmax is not None:
         adv_argmax = R_argmax - b
-        axes[1].plot(step, adv_argmax, color="C4", alpha=0.25, lw=0.6,
-                     label="advantage argmax (raw)")
+        axes[1].plot(step, adv_argmax, color="C4", alpha=0.25, lw=0.6)
         aa_s, aa_x = _smooth(adv_argmax)
         axes[1].plot(step[aa_x], aa_s, color="C4", lw=1.5,
-                     label="advantage argmax (smoothed)")
+                     label="advantage argmax")
     if (eval_step is not None and eval_stream_learned is not None
             and eval_stream_prior is not None
             and np.isfinite(eval_stream_learned).any()
