@@ -14,6 +14,7 @@ from rlmd.ops import resample_uniform_polyline
 from rlmd.visualization.visualize import (
     plot_polylines_initial_vs_final,
     render_deformation_video,
+    save_deformation_cells,
 )
 
 
@@ -109,6 +110,7 @@ def _write_deformation_batch_figure(
     *,
     first_index: int,
     max_batch: Optional[int] = None,
+    dpi: int = 150,
 ) -> None:
     plot_polylines_initial_vs_final(
         *_deformation_vis_tensors(
@@ -122,6 +124,7 @@ def _write_deformation_batch_figure(
             max_batch=max_batch,
         ),
         out_path,
+        dpi=dpi,
         title_prefix="sample",
         first_index=first_index,
     )
@@ -163,6 +166,9 @@ def run(cfg: DictConfig) -> str:
 
     sample_idx = 0
     visualize = bool(cfg.get("visualize_deformations", False))
+    vis_dpi = int(cfg.get("vis_dpi", 150))
+    vis_save_cells = bool(cfg.get("vis_save_cells", False))
+    vis_cells_fmt = str(cfg.get("vis_cells_format", "png"))
     resample_M = cfg.get("resample_M", None)
     if resample_M is not None:
         resample_M = int(resample_M)
@@ -238,6 +244,7 @@ def run(cfg: DictConfig) -> str:
                     nv_tgt,
                     vis_path,
                     first_index=sample_idx,
+                    dpi=vis_dpi,
                 )
                 print(f"wrote visualization {vis_path}")
 
@@ -258,8 +265,23 @@ def run(cfg: DictConfig) -> str:
                         preview_path,
                         first_index=sample_idx,
                         max_batch=8,
+                        dpi=vis_dpi,
                     )
                     print(f"wrote visualization {preview_path}")
+
+                if vis_save_cells:
+                    cells_dir = os.path.join(output_dir, "cells")
+                    tensors = _deformation_vis_tensors(
+                        V_src, V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt
+                    )
+                    save_deformation_cells(
+                        *tensors,
+                        cells_dir,
+                        dpi=vis_dpi,
+                        fmt=vis_cells_fmt,
+                        first_index=sample_idx,
+                    )
+                    print(f"wrote cells to {cells_dir}")
 
             with torch.no_grad():
                 poly_pred = (V_final, L_src, nv_src)

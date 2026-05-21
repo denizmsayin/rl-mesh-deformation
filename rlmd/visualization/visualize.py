@@ -129,6 +129,28 @@ def visualize_matching(
     return ax, match_idx
 
 
+_SRC_COLOR = "#1f77b4"
+_TGT_COLOR = "#ff7f0e"
+
+
+def _draw_poly_pair(ax, V_s, L_s, nv_s, V_t, L_t, nv_t, i):
+    n_s, n_t = int(nv_s[i].item()), int(nv_t[i].item())
+    v_s = V_s[i, :n_s].detach().cpu().numpy()
+    v_t = V_t[i, :n_t].detach().cpu().numpy()
+    e_s = L_s[i, :n_s].cpu().numpy()
+    e_t = L_t[i, :n_t].cpu().numpy()
+    draw_edges(ax, v_s, e_s, _SRC_COLOR)
+    draw_edges(ax, v_t, e_t, _TGT_COLOR)
+    all_pts = np.vstack([v_s, v_t])
+    span = float(all_pts.max() - all_pts.min())
+    pad = 0.1 * span if span > 0 else 0.05
+    ax.set_xlim(float(all_pts[:, 0].min()) - pad, float(all_pts[:, 0].max()) + pad)
+    ax.set_ylim(float(all_pts[:, 1].min()) - pad, float(all_pts[:, 1].max()) + pad)
+    ax.set_aspect("equal")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
 def plot_polylines_initial_vs_final(
     V_init,
     V_final,
@@ -144,26 +166,6 @@ def plot_polylines_initial_vs_final(
     first_index=0,
 ):
     """Per batch item: one row with initial | final (src vs tgt overlays), rows stacked top-to-bottom."""
-    SRC_COLOR = "#1f77b4"
-    TGT_COLOR = "#ff7f0e"
-
-    def _draw_pair(ax, V_s, L_s, nv_s, V_t, L_t, nv_t, i):
-        n_s, n_t = int(nv_s[i].item()), int(nv_t[i].item())
-        v_s = V_s[i, :n_s].detach().cpu().numpy()
-        v_t = V_t[i, :n_t].detach().cpu().numpy()
-        e_s = L_s[i, :n_s].cpu().numpy()
-        e_t = L_t[i, :n_t].cpu().numpy()
-        draw_edges(ax, v_s, e_s, SRC_COLOR)
-        draw_edges(ax, v_t, e_t, TGT_COLOR)
-        all_pts = np.vstack([v_s, v_t])
-        span = float(all_pts.max() - all_pts.min())
-        pad = 0.1 * span if span > 0 else 0.05
-        ax.set_xlim(float(all_pts[:, 0].min()) - pad, float(all_pts[:, 0].max()) + pad)
-        ax.set_ylim(float(all_pts[:, 1].min()) - pad, float(all_pts[:, 1].max()) + pad)
-        ax.set_aspect("equal")
-        ax.set_xticks([])
-        ax.set_yticks([])
-
     if V_init.dim() != 3 or V_init.shape[-1] != 2:
         raise ValueError("plot_polylines_initial_vs_final expects V with shape (B, N, 2).")
 
@@ -173,11 +175,48 @@ def plot_polylines_initial_vs_final(
     axes[0, 0].set_title("initial", fontsize=11)
     axes[0, 1].set_title("final", fontsize=11)
     for i in range(B):
-        _draw_pair(axes[i, 0], V_init, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
-        _draw_pair(axes[i, 1], V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+        _draw_poly_pair(axes[i, 0], V_init, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+        _draw_poly_pair(axes[i, 1], V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
         axes[i, 0].set_ylabel(f"{title_prefix}\n{first_index + i}", fontsize=10)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+
+
+def save_deformation_cells(
+    V_init,
+    V_final,
+    L_src,
+    nv_src,
+    V_tgt,
+    L_tgt,
+    nv_tgt,
+    out_dir,
+    *,
+    dpi=150,
+    fmt="pdf",
+    first_index=0,
+):
+    """Save one file per sample per column: src_{i}.{fmt} (initial) and tgt_{i}.{fmt} (final).
+
+    fmt can be any format matplotlib supports: 'png', 'pdf', 'svg', etc.
+    dpi is ignored for vector formats (pdf/svg).
+    """
+    import os
+
+    os.makedirs(out_dir, exist_ok=True)
+    B = V_init.shape[0]
+    for i in range(B):
+        global_i = first_index + i
+        for V_col, label in ((V_init, "src"), (V_final, "tgt")):
+            fig, ax = plt.subplots(1, 1, figsize=(2.4, 2.75))
+            _draw_poly_pair(ax, V_col, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+            fig.savefig(
+                os.path.join(out_dir, f"{label}_{global_i}.{fmt}"),
+                dpi=dpi,
+                bbox_inches="tight",
+                facecolor="white",
+            )
+            plt.close(fig)
 
 
 def render_deformation_video(

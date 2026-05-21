@@ -31,6 +31,12 @@ output_csv: results.csv
 
 # When true, write one PNG per batch (same layout as scripts/deform_polylines.py). CLI: visualize_deformations=true
 visualize_deformations: true
+# DPI for all deformation figures. CLI: vis_dpi=300
+vis_dpi: 150
+# When true, also write cells/<label>_<i>.<fmt> for each sample (src=initial, tgt=final). CLI: vis_save_cells=true
+vis_save_cells: true
+# Format for individual cell files: png, pdf, svg. PDF/SVG are vector and ignore vis_dpi. CLI: vis_cells_format=png
+vis_cells_format: pdf
 
 # When enabled, record an MP4 animation of the deformation for the first K
 # samples of the first batch. Only supported by scenarios whose `run` accepts a
