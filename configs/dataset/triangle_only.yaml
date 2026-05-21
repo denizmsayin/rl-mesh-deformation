@@ -1,0 +1,5 @@
+shapes:
+  triangle:
+    shape: triangle
+    num_points: 60
+    percentage: 1.0
