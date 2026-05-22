@@ -29,43 +29,59 @@ pixi run -e cuda pytorch3d-install  # build pytorch3d against the CUDA torch
 
 The default CPU environment is unaffected — omitting `-e cuda` always gives you the standard environment.
 
-## TODOs (17-04)
+## Usage
 
-Run the pytorch3d notebook: https://github.com/facebookresearch/pytorch3d/blob/main/docs/tutorials/deform_source_mesh_to_target_mesh.ipynb
+All scripts use Hydra; common knobs can be overridden inline as `key=value`. Outputs land under `outputs/<script>/<date>/<time>/` unless overridden. The dataset root defaults to `data_generation/generated_dataset/` — set `RLMD_DATASET=/path` to point elsewhere.
 
-View results with some software like MeshLab, try to understand what's going on, fiddle with it a little!
+### Generate a dataset
 
-### Data Generation
-
-Our data representation is two arrays for each shape: vertices `(V, 2)` and line segments `(L, 2)`. 
-
-Initially, we want to be able to generate lots of simple 2D shapes quickly. They each might have their own configuration parameters. For a circle, this might be the number of points we use to generate its shape. The core generation should be kept as simple as possible, most basic variations can be applied via rotation, scaling and translation tranformations. e.g. a basic circle should always be a unit circle. 
-
-We might want some function similar to this:
-
-```py
-generate_shapes(num_shapes, shape_config, scale_range, rotate_range, translate_range)
+```sh
+# Produce ${RLMD_DATASET}/triangle_centered_set/ with 2000 samples
+pixi run python scripts/generate.py \
+  dataset=triangle_only dataset/transform=centered \
+  dataset_name=triangle_centered_set N=2000
 ```
 
-`shape_config` could be a dict depending on the object. `{"name": "circle", "num_points": 50}` and `{"name": "hexagon"}` could work. 
+Common knobs: `dataset=<group>` (shape spec, see `configs/dataset/`), `dataset/transform=<group>` (augmentation, see `configs/dataset/transform/`), `N` (sample count), `dataset_name` (output subdir), `seed`.
 
-The ranges will be tuple ranges for randomization of data. e.g. a scale range of `(1.0, 1.0)` would mean we do not change the shape, but `(0.5, 2.0)` would mean we pick a random value between 0.5 and 2.0 for each generated shape and scale it. 
+### Evaluation harness
 
-Rotate could be in degrees for convenience. 
+Runs `(src, tgt)` pairs through a matcher + scenario and writes a long-format CSV plus optional PNGs.
 
-Feel free to complicate or simplify as necessary!
+```sh
+# Default: circle_translated_set → any_set with KNN matcher + SGD scenario
+pixi run python scripts/evaluate_harness.py
 
-### Visualization
+# Swap components, name the run, enable per-sample cell figures
+pixi run python scripts/evaluate_harness.py \
+  dataset_src=circle_centered_set dataset_tgt=triangle_centered_set \
+  scenario=sgd_quick run_name=triangle_quick \
+  visualize_deformations=true vis_save_cells=true
 
-We need to be able to easily visualize our intermediate results for debugging and evaluation. Something abstract like:
-
-```py
-visualize_data(name, source, target, matches)
+# Record an MP4 of the deformation for the first batch
+pixi run python scripts/evaluate_harness.py \
+  record_deformation.enabled=true record_deformation.first_k=8
 ```
 
-`source` and `target` will be tuples containing `(V, L)` arrays defining the shape. `matches` will be an array of shape `(V_s,)`, containing the index in `V_t` each source vertex matched to. `name` can be an identifier for the files the visualizations will be saved in, as more than one file might be necessary. 
+Common knobs: `dataset_src=` / `dataset_tgt=` (any `*_set` under `configs/dataset_{src,tgt}/`), `matcher=` (`knn_3d`, `learned`, `learned_stochastic`), `scenario=` (`sgd_default`, `sgd_quick`, `sgd_fixed_match`), `eval_num_samples` (subset size), `batch_size`, `device=auto|cpu|cuda`, `resample_M=<int>` (uniform arc-length resample — required when matcher is `learned*`, must match training `M`).
 
-At its simplest, we could generate some PNG images that draw both shapes and arrows between the matches. Or color the source with a color gradient and put the same colors in the target. Some heuristics to automatically deal with large numbers points like only drawing some representative arrows etc. would be nice. 
+### Train the learned matcher
 
-It would be nice to also have something like `visualize_sequence(names)` that will use the data saved for several visualizations and generate some combined visualization, like a GIF of how the process changed. 
+```sh
+# Defaults: src=circle_centered, tgt=triangle_centered, learned_stochastic + sgd_fixed_match
+pixi run -e cuda python scripts/train_matcher.py
 
+# Swap datasets (note the @-syntax for eval overrides — see CLAUDE.md for the dataset pair walkthrough)
+pixi run -e cuda python scripts/train_matcher.py \
+  src=circle_centered tgt=triangle_centered \
+  dataset_src@eval.dataset_src=circle_centered_set \
+  dataset_tgt@eval.dataset_tgt=triangle_centered_set
+
+# Smaller budget, EMA baseline, periodic eval every 250 steps
+pixi run -e cuda python scripts/train_matcher.py \
+  total_trajectories=200_000 \
+  baseline.type=ema baseline.momentum=0.9 \
+  eval.every_steps=250 checkpoint_every_steps=250
+```
+
+Common knobs: `total_trajectories` (sample budget), `batch_size`, `M` (resample target — also the eval-time `resample_M`), `optimizer.lr`, `entropy_coef`, `reward.w_chamfer` / `reward.w_normal`, `baseline.type` (`none`, `ema`, `prior`, `chamfer_sgd`), `eval.every_steps` / `eval.compare_to_knn`, `checkpoint_every_steps`.
