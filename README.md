@@ -85,3 +85,17 @@ pixi run -e cuda python scripts/train_matcher.py \
 ```
 
 Common knobs: `total_trajectories` (sample budget), `batch_size`, `M` (resample target — also the eval-time `resample_M`), `optimizer.lr`, `entropy_coef`, `reward.w_chamfer` / `reward.w_normal`, `baseline.type` (`none`, `ema`, `prior`, `chamfer_sgd`), `eval.every_steps` / `eval.compare_to_knn`, `checkpoint_every_steps`.
+
+### Evaluate a trained matcher
+
+Point the harness at the `matcher=learned` config and pass the checkpoint produced by training. `resample_M` must match the `M` used during training (16 by default).
+
+```sh
+pixi run -e cuda python scripts/evaluate_harness.py \
+  matcher=learned \
+  matcher.checkpoint_path=outputs/train_matcher/2026-05-22/12-00-00/matcher.pt \
+  dataset_src=circle_centered_set dataset_tgt=triangle_centered_set \
+  resample_M=16 run_name=learned_eval
+```
+
+Use `matcher=learned_stochastic` to evaluate with the sampling policy instead of argmax. Tweak `matcher.temperature` (and `matcher.override_temperature=true` for `learned`) to sharpen or soften the matching distribution.
