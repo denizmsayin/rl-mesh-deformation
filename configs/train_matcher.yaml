@@ -33,28 +33,28 @@ entropy_coef: 0.01
 #                 Strictly stronger reference than `prior` but each step pays
 #                 an inner SGD rollout that re-samples points and re-matches,
 #                 so training is noticeably slower.
-# baseline:
-#   type: none
+baseline:
+  type: none
 # baseline:
 #   type: ema
 #   momentum: 0.90
-baseline:
-  type: chamfer_sgd
-  scenario:
-    _target_: rlmd.evaluation.scenarios.SgdScenario
-    name: sgd_baseline
-    num_iters: 400
-    num_samples: 64
-    lr: 0.0625
-    momentum: 0.9
-    w_chamfer: 1.0
-    w_edge: 1.0
-    w_normal: 0.01
-    w_laplacian: 0.1
-    distance_p: 2
-  matcher:
-    _target_: rlmd.evaluation.matchers.Knn3dMatcher
-    bidirectional: true
+# baseline:
+#   type: chamfer_sgd
+#   scenario:
+#     _target_: rlmd.evaluation.scenarios.SgdScenario
+#     name: sgd_baseline
+#     num_iters: 400
+#     num_samples: 64
+#     lr: 0.0625
+#     momentum: 0.9
+#     w_chamfer: 1.0
+#     w_edge: 1.0
+#     w_normal: 0.01
+#     w_laplacian: 0.1
+#     distance_p: 2
+#   matcher:
+#     _target_: rlmd.evaluation.matchers.Knn3dMatcher
+#     bidirectional: true
 # baseline:
 #   type: prior
 
@@ -77,11 +77,11 @@ optimizer:
 # feature extractor; optionally also rolls out Knn3dMatcher on the same pairs
 # for an on-the-fly baseline comparison.
 eval:
-  every_steps: 500       # null disables periodic eval
-  num_samples: 256
+  every_steps: 25       # null disables periodic eval
+  num_samples: 1024
   seed_src: 100
   seed_tgt: 101
-  batch_size: 16
+  batch_size: 1024
   compare_to_knn: true
   # Number of sampled-rollout passes through the streamed-eval batch
   # (averaged per-state). Reduces sampled-eval noise at proportional cost.
