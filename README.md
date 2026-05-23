@@ -44,6 +44,13 @@ pixi run python scripts/generate.py \
 
 Common knobs: `dataset=<group>` (shape spec, see `configs/dataset/`), `dataset/transform=<group>` (augmentation, see `configs/dataset/transform/`), `N` (sample count), `dataset_name` (output subdir), `seed`.
 
+To (re)generate every set referenced by `configs/dataset_{src,tgt}/*_set.yaml` in one go:
+
+```sh
+./generate_datasets.sh          # N=2000 per set by default
+N=50000 ./generate_datasets.sh  # override sample count
+```
+
 ### Evaluation harness
 
 Runs `(src, tgt)` pairs through a matcher + scenario and writes a long-format CSV plus optional PNGs.
