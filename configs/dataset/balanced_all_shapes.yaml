@@ -170,7 +170,7 @@ shapes:
   # Irregular blobs: 0.23 total
   # Highest total mass because blobs test randomness, local curvature, and non-template variation.
   # -------------------------
-    blob_01:
+  blob_01:
     shape: blob
     num_points: 240
     n_tips: 3
