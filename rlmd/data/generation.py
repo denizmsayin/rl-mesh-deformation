@@ -132,6 +132,244 @@ class Star(BaseShape):
 
         return np.stack((x, y), axis=-1)
 
+class RegularPolygon(BaseShape):
+    def __init__(self, num_points=100, n_tips=5):
+        if n_tips < 3:
+            raise ValueError("n_tips must be >= 3")
+        self.n_tips = n_tips
+        super().__init__(num_points=num_points)
+
+    def compute_points(self, num_points=100):
+        angles = np.linspace(np.pi / 2, np.pi / 2 + 2 * np.pi, self.n_tips, endpoint=False)
+        xx = np.cos(angles)
+        yy = np.sin(angles)
+
+        points_per_edge = max(1, num_points // self.n_tips)
+        total_points = self.n_tips * points_per_edge
+
+        x = np.empty(total_points, dtype=float)
+        y = np.empty(total_points, dtype=float)
+
+        for i in range(self.n_tips):
+            x_i, y_i = xx[i], yy[i]
+            x1, y1 = xx[(i + 1) % self.n_tips], yy[(i + 1) % self.n_tips]
+
+            t = np.linspace(0, 1, points_per_edge, endpoint=False)
+            x_edge = x_i + t * (x1 - x_i)
+            y_edge = y_i + t * (y1 - y_i)
+
+            start = i * points_per_edge
+            end = start + points_per_edge
+            x[start:end] = x_edge
+            y[start:end] = y_edge
+
+        return np.stack((x, y), axis=-1)
+
+
+class Cog(BaseShape):
+    def __init__(self, num_points=100, n_tips=8, inner_radius=0.72, outer_radius=1.0, tip_width=0.45):
+        if n_tips < 3:
+            raise ValueError("n_tips must be >= 3")
+        if not (0 < inner_radius < outer_radius):
+            raise ValueError("Require 0 < inner_radius < outer_radius")
+        if not (0 < tip_width < 1):
+            raise ValueError("tip_width must be in (0, 1)")
+
+        self.n_tips = n_tips
+        self.inner_radius = inner_radius
+        self.outer_radius = outer_radius
+        self.tip_width = tip_width
+        super().__init__(num_points=num_points)
+
+    def compute_points(self, num_points=100):
+        verts = []
+        tip_angle = 2 * np.pi / self.n_tips
+        flat_half_width = 0.5 * self.tip_width * tip_angle
+
+        for i in range(self.n_tips):
+            center = np.pi / 2 + i * tip_angle
+
+            a0 = center - tip_angle / 2
+            a1 = center - flat_half_width
+            a2 = center + flat_half_width
+            a3 = center + tip_angle / 2
+
+            verts.extend([
+                [self.inner_radius * np.cos(a0), self.inner_radius * np.sin(a0)],
+                [self.outer_radius * np.cos(a1), self.outer_radius * np.sin(a1)],
+                [self.outer_radius * np.cos(a2), self.outer_radius * np.sin(a2)],
+                [self.inner_radius * np.cos(a3), self.inner_radius * np.sin(a3)],
+            ])
+
+        verts = np.asarray(verts, dtype=float)
+        n_vertices = len(verts)
+
+        points_per_edge = max(1, num_points // n_vertices)
+        total_points = n_vertices * points_per_edge
+
+        x = np.empty(total_points, dtype=float)
+        y = np.empty(total_points, dtype=float)
+
+        for i in range(n_vertices):
+            x_i, y_i = verts[i]
+            x1, y1 = verts[(i + 1) % n_vertices]
+
+            t = np.linspace(0, 1, points_per_edge, endpoint=False)
+            x_edge = x_i + t * (x1 - x_i)
+            y_edge = y_i + t * (y1 - y_i)
+
+            start = i * points_per_edge
+            end = start + points_per_edge
+            x[start:end] = x_edge
+            y[start:end] = y_edge
+
+        return np.stack((x, y), axis=-1)
+
+
+class Flower(BaseShape):
+    def __init__(self, num_points=100, n_tips=6, inner_radius=0.75):
+        if n_tips < 2:
+            raise ValueError("n_tips must be >= 2")
+        if not (0 < inner_radius < 1):
+            raise ValueError("inner_radius must be in (0, 1)")
+
+        self.n_tips = n_tips
+        self.inner_radius = inner_radius
+        super().__init__(num_points=num_points)
+
+    def compute_points(self, num_points=100):
+        theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+
+        amplitude = 1.0 - self.inner_radius
+        r = 1.0 - 0.5 * amplitude + 0.5 * amplitude * np.cos(self.n_tips * theta)
+
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+
+        return np.stack((x, y), axis=-1)
+
+
+class Heart(BaseShape):
+    def compute_points(self, num_points=100):
+        t = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+
+        x = 16 * np.sin(t) ** 3
+        y = (
+            13 * np.cos(t)
+            - 5 * np.cos(2 * t)
+            - 2 * np.cos(3 * t)
+            - np.cos(4 * t)
+        )
+
+        points = np.stack((x, y), axis=-1)
+
+        points = points - points.mean(axis=0, keepdims=True)
+        scale = np.max(np.linalg.norm(points, axis=1))
+        points = points / scale
+
+        return points
+
+class Moon(BaseShape):
+    def __init__(self, num_points=100, inner_radius=0.75, offset=0.35):
+        if not (0 < inner_radius < 1):
+            raise ValueError("inner_radius must be in (0, 1)")
+        if offset <= 0:
+            raise ValueError("offset must be > 0")
+
+        self.outer_radius = 1.0
+        self.inner_radius = inner_radius
+        self.offset = offset
+        super().__init__(num_points=num_points)
+
+    def compute_points(self, num_points=100):
+        R = self.outer_radius
+        r = self.inner_radius
+        d = self.offset
+
+        # Need intersecting circles
+        if not (abs(R - r) < d < R + r):
+            raise ValueError("Moon parameters must satisfy |R-r| < offset < R+r")
+
+        # Intersection geometry
+        a = (R**2 - r**2 + d**2) / (2 * d)
+        h = np.sqrt(max(R**2 - a**2, 0.0))
+
+        x_int = a
+        y_int = h
+
+        # Angles on outer circle
+        theta_top = np.arctan2(y_int, x_int)
+        theta_bottom = np.arctan2(-y_int, x_int)
+
+        # Angles on inner circle (centered at (d,0))
+        phi_top = np.arctan2(y_int, x_int - d)
+        phi_bottom = np.arctan2(-y_int, x_int - d)
+
+        n_outer = num_points // 2
+        n_inner = num_points - n_outer
+
+        # Outer boundary: take the LEFT major arc from top -> bottom
+        outer_angles = np.linspace(theta_top, theta_bottom + 2 * np.pi, n_outer, endpoint=False)
+        x_outer = R * np.cos(outer_angles)
+        y_outer = R * np.sin(outer_angles)
+
+        # Inner boundary: take the LEFT major arc from bottom -> top
+        # This must go the long way around, so we go clockwise.
+        inner_angles = np.linspace(phi_bottom, phi_top - 2 * np.pi, n_inner, endpoint=False)
+        x_inner = d + r * np.cos(inner_angles)
+        y_inner = r * np.sin(inner_angles)
+
+        x = np.concatenate([x_outer, x_inner])
+        y = np.concatenate([y_outer, y_inner])
+
+        points = np.stack((x, y), axis=-1)
+
+        # Normalize
+        points = points - points.mean(axis=0, keepdims=True)
+        scale = np.max(np.linalg.norm(points, axis=1))
+        points = points / scale
+
+        return points
+
+class Blob(BaseShape):
+    def __init__(self, num_points=100, n_tips=5, inner_radius=0.75, seed=0):
+        if n_tips < 1:
+            raise ValueError("n_tips must be >= 1")
+        if not (0 < inner_radius < 1):
+            raise ValueError("inner_radius must be in (0, 1)")
+
+        self.n_tips = n_tips
+        self.inner_radius = inner_radius
+        self.seed = seed
+        super().__init__(num_points=num_points)
+
+    def compute_points(self, num_points=100):
+        rng = np.random.default_rng(self.seed)
+
+        theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+        r = np.ones_like(theta)
+
+        amplitude = 1.0 - self.inner_radius
+
+        for k in range(1, self.n_tips + 1):
+            a = rng.uniform(-amplitude, amplitude) / k
+            b = rng.uniform(-amplitude, amplitude) / k
+            r += a * np.cos(k * theta) + b * np.sin(k * theta)
+
+        r = np.clip(r, self.inner_radius, None)
+
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+
+        points = np.stack((x, y), axis=-1)
+
+        points = points - points.mean(axis=0, keepdims=True)
+        scale = np.max(np.linalg.norm(points, axis=1))
+        points = points / scale
+
+        return points
+
+
 
 class TransformedShapeBatch:
     """
@@ -352,6 +590,12 @@ class ShapeGenerator:
             "hexagon": Hexagon,
             "triangle": Triangle,
             "star": Star,
+            "polygon": RegularPolygon,
+            "cog": Cog,
+            "flower": Flower,
+            "heart": Heart,
+            "moon": Moon,
+            "blob": Blob,
         }
 
         # NumPy BaseShape cache

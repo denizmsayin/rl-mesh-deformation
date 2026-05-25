@@ -1,0 +1,331 @@
+# Feature-balanced mixture with 25 shape instances.
+# The balance is by shape family, not by individual instance.
+# Similar shapes such as circle / hexagon / octagon / dodecagon share one smaller group.
+
+shapes:
+  # -------------------------
+  # Smooth / convex / polygon-like: 0.16 total
+  # These are similar, so each individual one gets relatively low percentage.
+  # -------------------------
+  circle:
+    shape: circle
+    num_points: 120
+    percentage: 0.035
+
+  triangle:
+    shape: triangle
+    num_points: 120
+    percentage: 0.035
+
+  polygon_4:
+    shape: polygon
+    num_points: 120
+    n_tips: 4
+    percentage: 0.025
+
+  hexagon:
+    shape: hexagon
+    num_points: 120
+    percentage: 0.025
+
+  polygon_8:
+    shape: polygon
+    num_points: 160
+    n_tips: 8
+    percentage: 0.020
+
+  polygon_12:
+    shape: polygon
+    num_points: 240
+    n_tips: 12
+    percentage: 0.020
+
+  # -------------------------
+  # Sharp star-like nonconvex shapes: 0.17 total
+  # These test sharp corners, concavity, and many alternating radii.
+  # -------------------------
+  star_5:
+    shape: star
+    num_points: 120
+    n_tips: 5
+    inner_radius: 0.45
+    percentage: 0.050
+
+  star_8:
+    shape: star
+    num_points: 160
+    n_tips: 8
+    inner_radius: 0.50
+    percentage: 0.045
+
+  star_12:
+    shape: star
+    num_points: 240
+    n_tips: 12
+    inner_radius: 0.60
+    percentage: 0.040
+
+  star_20:
+    shape: star
+    num_points: 400
+    n_tips: 20
+    inner_radius: 0.70
+    percentage: 0.035
+
+  # -------------------------
+  # Cog / gear-like shapes: 0.13 total
+  # Different from stars because teeth are flatter and more mechanical.
+  # -------------------------
+  cog_6:
+    shape: cog
+    num_points: 240
+    n_tips: 6
+    inner_radius: 0.70
+    tip_width: 0.45
+    percentage: 0.050
+
+  cog_10:
+    shape: cog
+    num_points: 400
+    n_tips: 10
+    inner_radius: 0.72
+    tip_width: 0.45
+    percentage: 0.045
+
+  cog_16:
+    shape: cog
+    num_points: 512
+    n_tips: 16
+    inner_radius: 0.75
+    tip_width: 0.40
+    percentage: 0.035
+
+  # -------------------------
+  # Smooth periodic flower shapes: 0.13 total
+  # These are nonconvex but smooth, unlike stars/cogs.
+  # -------------------------
+  flower_4:
+    shape: flower
+    num_points: 240
+    n_tips: 4
+    inner_radius: 0.65
+    percentage: 0.040
+
+  flower_6:
+    shape: flower
+    num_points: 360
+    n_tips: 6
+    inner_radius: 0.72
+    percentage: 0.035
+
+  flower_10:
+    shape: flower
+    num_points: 600
+    n_tips: 10
+    inner_radius: 0.78
+    percentage: 0.030
+
+  flower_16:
+    shape: flower
+    num_points: 960
+    n_tips: 16
+    inner_radius: 0.82
+    percentage: 0.025
+
+  # -------------------------
+  # Heart: 0.08 total
+  # Fundamentally different: asymmetric-ish semantic curved shape with cusp.
+  # -------------------------
+  heart:
+    shape: heart
+    num_points: 300
+    percentage: 0.080
+
+  # -------------------------
+  # Moon / crescent shapes: 0.10 total
+  # Fundamentally different from heart/star/blob because of crescent geometry.
+  # -------------------------
+  moon_thin:
+    shape: moon
+    num_points: 300
+    inner_radius: 0.75
+    offset: 0.35
+    percentage: 0.040
+
+  moon_medium:
+    shape: moon
+    num_points: 300
+    inner_radius: 0.80
+    offset: 0.45
+    percentage: 0.035
+
+  moon_deep:
+    shape: moon
+    num_points: 360
+    inner_radius: 0.70
+    offset: 0.50
+    percentage: 0.025
+
+  # -------------------------
+  # Irregular blobs: 0.23 total
+  # Highest total mass because blobs test randomness, local curvature, and non-template variation.
+  # -------------------------
+    blob_01:
+    shape: blob
+    num_points: 240
+    n_tips: 3
+    inner_radius: 0.78
+    seed: 0
+    percentage: 0.013
+
+  blob_02:
+    shape: blob
+    num_points: 260
+    n_tips: 4
+    inner_radius: 0.74
+    seed: 1
+    percentage: 0.013
+
+  blob_03:
+    shape: blob
+    num_points: 280
+    n_tips: 5
+    inner_radius: 0.72
+    seed: 2
+    percentage: 0.013
+
+  blob_04:
+    shape: blob
+    num_points: 300
+    n_tips: 6
+    inner_radius: 0.70
+    seed: 3
+    percentage: 0.013
+
+  blob_05:
+    shape: blob
+    num_points: 320
+    n_tips: 7
+    inner_radius: 0.68
+    seed: 4
+    percentage: 0.013
+
+  blob_06:
+    shape: blob
+    num_points: 340
+    n_tips: 8
+    inner_radius: 0.72
+    seed: 5
+    percentage: 0.012
+
+  blob_07:
+    shape: blob
+    num_points: 360
+    n_tips: 9
+    inner_radius: 0.70
+    seed: 6
+    percentage: 0.012
+
+  blob_08:
+    shape: blob
+    num_points: 380
+    n_tips: 10
+    inner_radius: 0.68
+    seed: 7
+    percentage: 0.012
+
+  blob_09:
+    shape: blob
+    num_points: 420
+    n_tips: 12
+    inner_radius: 0.66
+    seed: 8
+    percentage: 0.012
+
+  blob_10:
+    shape: blob
+    num_points: 460
+    n_tips: 14
+    inner_radius: 0.64
+    seed: 9
+    percentage: 0.012
+
+  blob_11:
+    shape: blob
+    num_points: 520
+    n_tips: 16
+    inner_radius: 0.66
+    seed: 10
+    percentage: 0.012
+
+  blob_12:
+    shape: blob
+    num_points: 580
+    n_tips: 18
+    inner_radius: 0.68
+    seed: 11
+    percentage: 0.012
+
+  blob_13:
+    shape: blob
+    num_points: 660
+    n_tips: 20
+    inner_radius: 0.65
+    seed: 12
+    percentage: 0.012
+
+  blob_14:
+    shape: blob
+    num_points: 760
+    n_tips: 24
+    inner_radius: 0.67
+    seed: 13
+    percentage: 0.012
+
+  blob_15:
+    shape: blob
+    num_points: 880
+    n_tips: 28
+    inner_radius: 0.69
+    seed: 14
+    percentage: 0.011
+
+  blob_16:
+    shape: blob
+    num_points: 1020
+    n_tips: 32
+    inner_radius: 0.70
+    seed: 15
+    percentage: 0.011
+
+  blob_17:
+    shape: blob
+    num_points: 1200
+    n_tips: 36
+    inner_radius: 0.72
+    seed: 16
+    percentage: 0.011
+
+  blob_18:
+    shape: blob
+    num_points: 1450
+    n_tips: 40
+    inner_radius: 0.74
+    seed: 17
+    percentage: 0.011
+
+  blob_19:
+    shape: blob
+    num_points: 1800
+    n_tips: 45
+    inner_radius: 0.77
+    seed: 18
+    percentage: 0.007
+
+  blob_20:
+    shape: blob
+    num_points: 2500
+    n_tips: 50
+    inner_radius: 0.80
+    seed: 19
+    percentage: 0.007
