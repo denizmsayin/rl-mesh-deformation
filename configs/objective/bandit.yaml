@@ -1,0 +1,4 @@
+# Single-action bandit REINFORCE: match once at t=0, freeze the correspondence
+# for the whole inner SGD, optimize the terminal reward. Pairs with
+# scenario=sgd_fixed_match.
+_target_: rlmd.training.BanditObjective

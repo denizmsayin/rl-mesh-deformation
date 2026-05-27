@@ -1,8 +1,9 @@
 defaults:
-  - src: circle_centered
-  - tgt: triangle_centered
+  - src: circle_translated
+  - tgt: shapes
   - matcher: learned_stochastic
   - scenario: sgd_fixed_match
+  - objective: bandit
   - baseline: none
   - _self_
 

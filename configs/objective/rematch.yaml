@@ -1,0 +1,14 @@
+# Multi-step REINFORCE: re-call the matcher every `scenario.rematch_every`
+# inner iters (a finite-horizon MDP). Pairs with scenario=sgd_rematch.
+#
+# credit_mode:
+#   dense  — per-step return-to-go G_t = Φ_T - Φ_t (γ=1); with a rollout
+#            baseline this is multi-step SCST (A_t = Φ_T - Φ_T^greedy(s_t)),
+#            giving per-match credit. Recommended.
+#   joint  — terminal reward, advantage shared across the K matches. Cheap
+#            control; cannot isolate which match mattered.
+#
+# The re-match interval lives on the scenario (scenario.rematch_every), not
+# here — the dense baseline reads it to size the per-state rollout horizon.
+_target_: rlmd.training.RematchObjective
+credit_mode: dense

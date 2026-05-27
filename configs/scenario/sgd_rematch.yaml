@@ -1,0 +1,11 @@
+_target_: rlmd.evaluation.scenarios.SgdRematchScenario
+name: sgd_rematch
+num_iters: 400
+rematch_every: 80   # T = ceil(num_iters / rematch_every) re-match decisions
+lr: 0.0625    # per-item; loss ops sum over batch (see rlmd/ops/distance.py), so lr is batch-size-invariant
+momentum: 0.9
+w_data: 1.0
+w_edge: 1.0
+w_normal: 0.01
+w_laplacian: 0.1
+distance_p: 2

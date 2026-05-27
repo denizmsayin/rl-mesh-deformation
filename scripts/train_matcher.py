@@ -10,7 +10,6 @@ Per batch:
 
 Hydra entry; config at configs/train_matcher.yaml.
 """
-import copy
 import os
 
 import hydra
@@ -23,7 +22,6 @@ from tqdm import tqdm
 
 from rlmd.dataset import shape_collate_fn
 from rlmd.evaluation.matchers import (
-    FixedMatcher,
     Knn3dMatcher,
     LearnedMatcher,
     StochasticLearnedMatcher,
@@ -45,6 +43,7 @@ class _StochasticRolloutMatcher:
         return matchings
 from rlmd.evaluation.metrics import ChamferMetric
 from rlmd.ops import resample_uniform_polyline
+from rlmd.training import CompositeChamferReward, METRIC_COLUMNS, build_baseline
 
 
 def _resolve_device(spec):
@@ -209,35 +208,6 @@ def _evaluate(feature_extractor, eval_cfg, ds_src, ds_tgt, scenario, chamfer, M,
     return out
 
 
-class _Baseline:
-    """Scalar baseline applied to (B,) rewards. Supported types: 'none', 'ema'.
-
-    Other baseline types ('prior', 'chamfer_sgd') are handled inline in the
-    train loop because they need per-state rollouts."""
-
-    def __init__(self, cfg: DictConfig):
-        self.type = str(cfg.get("type", "none"))
-        if self.type == "ema":
-            self.momentum = float(cfg.get("momentum", 0.99))
-            self.value = None
-        elif self.type != "none":
-            raise ValueError(f"unknown scalar-baseline type: {self.type!r}")
-
-    def __call__(self, R: torch.Tensor) -> torch.Tensor:
-        if self.type == "none":
-            return torch.zeros_like(R)
-        # ema: return the current (pre-update) value, then update with this batch.
-        # First-batch fallback uses the batch mean so the very first advantage is
-        # centered rather than equal to R.
-        batch_mean = R.detach().mean().item()
-        b = batch_mean if self.value is None else self.value
-        if self.value is None:
-            self.value = batch_mean
-        else:
-            self.value = self.momentum * self.value + (1.0 - self.momentum) * batch_mean
-        return torch.full_like(R, b)
-
-
 def _save_training_curves(log_path: str, out_path: str, baseline_type: str) -> None:
     """Plot reward / baseline / advantage from the per-step CSV log."""
     import csv
@@ -392,43 +362,46 @@ def train(cfg: DictConfig) -> str:
     # wrapper so all forward calls (training + argmax eval) go through it.
     feature_extractor = matcher.feature_extractor
 
-    # SCST-style baseline: snapshot the initial extractor (frozen, deterministic
-    # argmax) as a state-conditional reference. Must be deep-copied BEFORE
-    # torch.compile so the prior is a clean uncompiled module that doesn't
-    # share weight tensors with the trainable matcher.
+    scenario = instantiate(cfg.scenario)
+
+    w_chamfer = float(cfg.reward.w_chamfer)
+    w_normal = float(cfg.reward.w_normal)
+
+    # Reward potential Φ shared by the objective and the (rollout) baseline.
+    reward = CompositeChamferReward(num_samples=int(cfg.reward_num_samples),
+                                    w_chamfer=w_chamfer, w_normal=w_normal)
+
+    # Baseline. `prior` deep-copies + freezes the extractor, so it MUST be built
+    # before torch.compile swaps in the compiled wrapper (otherwise the prior
+    # would share weight tensors with the trainable policy).
     baseline_type = str(cfg.baseline.get("type", "none"))
-    ema_baseline = None
-    prior_matcher = None
-    baseline_scenario = None
-    baseline_matcher = None
-    if baseline_type == "prior":
-        prior_extractor = copy.deepcopy(feature_extractor)
-        for p in prior_extractor.parameters():
-            p.requires_grad = False
-        prior_matcher = LearnedMatcher(torch.compile(prior_extractor),
-                                       temperature=matcher.temperature)
-    elif baseline_type == "chamfer_sgd":
-        # Per-state baseline: at each step, run a separate (full-chamfer) SGD
-        # scenario — typically rlmd.evaluation.scenarios.SgdScenario with a
-        # Knn3dMatcher — and use the resulting composite reward as b. Strictly
-        # stronger than `prior` (this baseline keeps re-matching points across
-        # iterations) but each step pays a full inner SGD rollout.
-        baseline_scenario = instantiate(cfg.baseline.scenario)
-        baseline_matcher = instantiate(cfg.baseline.matcher)
-    else:
-        ema_baseline = _Baseline(cfg.baseline)
+    baseline = build_baseline(
+        cfg.baseline, training_scenario=scenario, reward=reward,
+        feature_extractor=feature_extractor, temperature=matcher.temperature,
+    )
+    # Eval reuses the rollout baseline's components for its streamed diagnostics
+    # (stream_prior / stream_baseline curves), matching the previous behavior.
+    prior_matcher = baseline.matcher if baseline_type == "prior" else None
+    baseline_scenario = baseline.scenario if baseline_type == "chamfer_sgd" else None
+    baseline_matcher = baseline.matcher if baseline_type == "chamfer_sgd" else None
 
     matcher.feature_extractor = torch.compile(feature_extractor)
 
     optimizer = instantiate(cfg.optimizer, params=feature_extractor.parameters())
 
-    scenario = instantiate(cfg.scenario)
+    # `_partial_` binds the config-side args (e.g. credit_mode) and lets us pass
+    # the live scenario/reward/baseline objects straight to the constructor —
+    # passing them as instantiate kwargs would make Hydra re-wrap the dataclass
+    # scenario as a structured config.
+    objective = instantiate(cfg.objective, _partial_=True)(
+        scenario=scenario, reward=reward, baseline=baseline,
+        entropy_coef=float(cfg.entropy_coef),
+    )
 
+    # Reward Chamfer used only by the eval path (kept independent of the
+    # objective's reward; see _rollout_reward / _evaluate).
     chamfer = ChamferMetric(num_samples=int(cfg.reward_num_samples),
                             point_reduction="mean", norm=2, with_normals=True)
-
-    w_chamfer = float(cfg.reward.w_chamfer)
-    w_normal = float(cfg.reward.w_normal)
 
     hydra_cfg = HydraConfig.get()
     output_dir = hydra_cfg.runtime.output_dir
@@ -539,12 +512,7 @@ def train(cfg: DictConfig) -> str:
     _run_eval(0)
 
     with open(log_path, "w") as logf:
-        logf.write(
-            "step,traj,reward_mean,reward_std,"
-            "reward_chamfer_mean,reward_normal_mean,"
-            "advantage_mean,advantage_std,"
-            "loss,entropy,baseline\n"
-        )
+        logf.write("step,traj," + ",".join(METRIC_COLUMNS) + "\n")
 
         pbar = tqdm(total=total_trajectories, desc="train", unit="traj")
         step = 0
@@ -561,74 +529,26 @@ def train(cfg: DictConfig) -> str:
             V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(
                 V_tgt, L_tgt, nv_tgt, int(cfg.M))
 
-            matchings, log_prob, entropy = matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
-
-            V_final = scenario.run(
+            update = objective.compute(
+                matcher,
                 (V_src_r, L_src_r, nv_src_r),
                 (V_tgt_r, L_tgt_r, nv_tgt_r),
-                FixedMatcher(matchings),
             )
-
-            with torch.no_grad():
-                out = chamfer((V_final, L_src_r, nv_src_r),
-                              (V_tgt_r, L_tgt_r, nv_tgt_r))
-                R = _compute_reward(out, w_chamfer, w_normal)  # (B,)
-
-            # Baseline: scalar EMA (or zero), per-state SCST under the frozen
-            # prior policy, or per-state full-chamfer SGD rollout. The two
-            # per-state options each cost one extra scenario evaluation per
-            # step (chamfer_sgd is typically the more expensive of the two).
-            if prior_matcher is not None:
-                prior_matchings = prior_matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
-                V_final_prior = scenario.run(
-                    (V_src_r, L_src_r, nv_src_r),
-                    (V_tgt_r, L_tgt_r, nv_tgt_r),
-                    FixedMatcher(prior_matchings),
-                )
-                with torch.no_grad():
-                    out_prior = chamfer((V_final_prior, L_src_r, nv_src_r),
-                                        (V_tgt_r, L_tgt_r, nv_tgt_r))
-                    b = _compute_reward(out_prior, w_chamfer, w_normal)  # (B,)
-            elif baseline_scenario is not None:
-                V_final_b = baseline_scenario.run(
-                    (V_src_r, L_src_r, nv_src_r),
-                    (V_tgt_r, L_tgt_r, nv_tgt_r),
-                    baseline_matcher,
-                )
-                with torch.no_grad():
-                    out_b = chamfer((V_final_b, L_src_r, nv_src_r),
-                                    (V_tgt_r, L_tgt_r, nv_tgt_r))
-                    b = _compute_reward(out_b, w_chamfer, w_normal)      # (B,)
-            else:
-                assert ema_baseline is not None
-                with torch.no_grad():
-                    b = ema_baseline(R)                                  # (B,)
-
-            advantage = (R - b).detach()
-            loss = -(advantage * log_prob).mean() \
-                   - float(cfg.entropy_coef) * entropy.mean()
 
             optimizer.zero_grad()
-            loss.backward()
+            update.loss.backward()
             optimizer.step()
 
-            adv_std = advantage.std().item() if advantage.numel() > 1 else 0.0
-            logf.write(
-                f"{step},{traj},"
-                f"{R.mean().item():.6g},{R.std().item():.6g},"
-                f"{out['chamfer_sym'].mean().item():.6g},"
-                f"{out['normal_sym'].mean().item():.6g},"
-                f"{advantage.mean().item():.6g},{adv_std:.6g},"
-                f"{loss.item():.6g},{entropy.mean().item():.6g},"
-                f"{b.mean().item():.6g}\n"
-            )
+            m = update.metrics
+            logf.write(f"{step},{traj}," +
+                       ",".join(f"{m[k]:.6g}" for k in METRIC_COLUMNS) + "\n")
             logf.flush()
 
             pbar.update(B)
             pbar.set_postfix({
-                "R": f"{R.mean().item():.4f}",
-                "ent": f"{entropy.mean().item():.3f}",
-                "loss": f"{loss.item():.4f}",
+                "R": f"{m['reward_mean']:.4f}",
+                "ent": f"{m['entropy']:.3f}",
+                "loss": f"{m['loss']:.4f}",
             })
 
             if checkpoint_every is not None and step % checkpoint_every == 0:
