@@ -3,7 +3,7 @@ defaults:
   - tgt: triangle_centered
   - matcher: learned_stochastic
   - scenario: sgd_fixed_match
-  - baseline: chamfer_sgd
+  - baseline: none
   - _self_
 
 device: auto
