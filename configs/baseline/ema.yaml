@@ -1,0 +1,3 @@
+# Scalar running mean of batch rewards (variance reduction only).
+type: ema
+momentum: 0.90

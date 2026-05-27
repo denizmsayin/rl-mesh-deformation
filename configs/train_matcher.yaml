@@ -3,6 +3,7 @@ defaults:
   - tgt: triangle_centered
   - matcher: learned_stochastic
   - scenario: sgd_fixed_match
+  - baseline: chamfer_sgd
   - _self_
 
 device: auto
@@ -21,42 +22,7 @@ M: 16
 # REINFORCE
 entropy_coef: 0.01
 
-# Baseline: type ∈ {none, ema, prior, chamfer_sgd}.
-#   none        — zero baseline (raw REINFORCE).
-#   ema         — scalar running mean of batch rewards (variance reduction only).
-#   prior       — per-state SCST baseline: at each step, roll out the training
-#                 scenario with the frozen-at-step-0 policy's argmax matching
-#                 and use that reward as the baseline. Costs one extra
-#                 (FixedMatch) scenario rollout per step.
-#   chamfer_sgd — per-state baseline using a full-chamfer SGD scenario (with a
-#                 fresh KNN match every inner iter) on the same src/tgt pair.
-#                 Strictly stronger reference than `prior` but each step pays
-#                 an inner SGD rollout that re-samples points and re-matches,
-#                 so training is noticeably slower.
-baseline:
-  type: none
-# baseline:
-#   type: ema
-#   momentum: 0.90
-# baseline:
-#   type: chamfer_sgd
-#   scenario:
-#     _target_: rlmd.evaluation.scenarios.SgdScenario
-#     name: sgd_baseline
-#     num_iters: 400
-#     num_samples: 64
-#     lr: 0.0625
-#     momentum: 0.9
-#     w_chamfer: 1.0
-#     w_edge: 1.0
-#     w_normal: 0.01
-#     w_laplacian: 0.1
-#     distance_p: 2
-#   matcher:
-#     _target_: rlmd.evaluation.matchers.Knn3dMatcher
-#     bidirectional: true
-# baseline:
-#   type: prior
+# REINFORCE baseline — switch via `baseline=<name>` (see configs/baseline/).
 
 # Number of points to sample from each polyline for the reward Chamfer.
 reward_num_samples: 8192

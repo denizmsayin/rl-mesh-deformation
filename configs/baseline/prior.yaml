@@ -1,0 +1,3 @@
+# Per-state SCST baseline: roll out the frozen-at-step-0 policy's argmax
+# matching on the training scenario and use that reward as the baseline.
+type: prior

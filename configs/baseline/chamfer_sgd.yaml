@@ -1,0 +1,10 @@
+# Per-state baseline via a full-chamfer SGD scenario (fresh KNN match every
+# inner iter). Stronger than `prior` but noticeably slower per step.
+type: chamfer_sgd
+defaults:
+  - /scenario@scenario: sgd_default
+  - /matcher@matcher: knn_3d
+
+scenario:
+  name: sgd_baseline
+  num_iters: 400
