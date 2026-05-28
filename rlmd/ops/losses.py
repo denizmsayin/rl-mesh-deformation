@@ -1,7 +1,7 @@
 import torch
 
 
-def polyline_edge_loss(V, L, num_verts, target_length=0.0):
+def polyline_edge_loss(V, L, num_edges, target_length=0.0):
     """
     Mean squared deviation of edge length from a target length.
 
@@ -10,12 +10,12 @@ def polyline_edge_loss(V, L, num_verts, target_length=0.0):
 
     Args:
         V: (B, N_max, 2) float.
-        L: (B, M_max, 2) long, padded with (0, 0).
-        num_verts: (B,) long — valid edges per item (== valid verts for closed polylines).
+        L: (B, M_max, 2) long, padded past ``num_edges`` (sentinel rows ignored).
+        num_edges: (B,) long — valid edges per item.
         target_length: desired edge length. 0.0 shrinks edges.
 
     Returns:
-        scalar loss, averaged per item then summed over batch.
+        scalar loss, averaged per item (over edges) then summed over batch.
     """
     B, M_max, _ = L.shape
     batch = torch.arange(B, device=V.device)[:, None]
@@ -24,13 +24,13 @@ def polyline_edge_loss(V, L, num_verts, target_length=0.0):
     v1 = V[batch, L[..., 1]]
 
     lengths = (v1 - v0).norm(dim=-1)
-    mask = torch.arange(M_max, device=V.device)[None, :] < num_verts[:, None]
+    mask = torch.arange(M_max, device=V.device)[None, :] < num_edges[:, None]
 
     loss = ((lengths - target_length) ** 2) * mask
-    return (loss.sum(dim=-1) / num_verts).sum()
+    return (loss.sum(dim=-1) / num_edges.clamp(min=1)).sum()
 
 
-def polyline_laplacian_smoothing(V, L, num_verts):
+def polyline_laplacian_smoothing(V, L, num_verts, num_edges):
     """
     Uniform-Laplacian smoothing loss. For each vertex v_i with neighbors S(i),
     computes ||v_i - mean(v_j for j in S(i))||, averages per item, then sums
@@ -40,8 +40,9 @@ def polyline_laplacian_smoothing(V, L, num_verts):
 
     Args:
         V: (B, N_max, 2) float.
-        L: (B, M_max, 2) long, padded with (0, 0).
-        num_verts: (B,) long.
+        L: (B, M_max, 2) long, padded past ``num_edges`` (sentinel rows ignored).
+        num_verts: (B,) long — valid vertices per item (sets the per-item denom).
+        num_edges: (B,) long — valid edges per item (selects the neighbour graph).
 
     Returns:
         scalar loss.
@@ -50,7 +51,7 @@ def polyline_laplacian_smoothing(V, L, num_verts):
     M_max = L.shape[1]
     batch = torch.arange(B, device=V.device)[:, None]
 
-    edge_mask = torch.arange(M_max, device=V.device)[None, :] < num_verts[:, None]
+    edge_mask = torch.arange(M_max, device=V.device)[None, :] < num_edges[:, None]
     emask = edge_mask.to(V.dtype).unsqueeze(-1)
 
     a = L[..., 0]
@@ -73,7 +74,7 @@ def polyline_laplacian_smoothing(V, L, num_verts):
     return (loss.sum(dim=-1) / num_verts).sum()
 
 
-def polyline_normal_consistency(V, L, num_verts):
+def polyline_normal_consistency(V, L, num_verts, num_edges):
     """
     Normal-consistency loss for closed 2D polylines. At each vertex, compares
     the incoming and outgoing edge directions via 1 - cos(d_in, d_out).
@@ -84,8 +85,9 @@ def polyline_normal_consistency(V, L, num_verts):
 
     Args:
         V: (B, N_max, 2) float.
-        L: (B, M_max, 2) long, padded with (0, 0).
-        num_verts: (B,) long.
+        L: (B, M_max, 2) long, padded past ``num_edges`` (sentinel rows ignored).
+        num_verts: (B,) long — valid vertices per item (sets the per-item denom).
+        num_edges: (B,) long — valid edges per item (selects the edge directions).
 
     Returns:
         scalar loss.
@@ -94,7 +96,7 @@ def polyline_normal_consistency(V, L, num_verts):
     M_max = L.shape[1]
     batch = torch.arange(B, device=V.device)[:, None]
 
-    edge_mask = torch.arange(M_max, device=V.device)[None, :] < num_verts[:, None]
+    edge_mask = torch.arange(M_max, device=V.device)[None, :] < num_edges[:, None]
     emask = edge_mask.to(V.dtype).unsqueeze(-1)
 
     a = L[..., 0]

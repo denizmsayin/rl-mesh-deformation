@@ -52,27 +52,27 @@ def build_batch():
         tgt_pts.append(base_tgt.get_points() @ R.T + np.array(c))
     tgt_edges = [base_tgt.get_edges() for _ in range(BATCH_SIZE)]
 
-    V_src, L_src, nv_src = pad_polylines(src_pts, src_edges)
-    V_tgt, L_tgt, nv_tgt = pad_polylines(tgt_pts, tgt_edges)
-    return V_src, L_src, nv_src, V_tgt, L_tgt, nv_tgt
+    V_src, L_src, nv_src, ne_src = pad_polylines(src_pts, src_edges)
+    V_tgt, L_tgt, nv_tgt, ne_tgt = pad_polylines(tgt_pts, tgt_edges)
+    return V_src, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt
 
 
-def compute_losses(V, L, nv, V_tgt, L_tgt, nv_tgt):
-    P = sample_points_from_polylines(V, L, nv, NUM_SAMPLES)
-    P_tgt = sample_points_from_polylines(V_tgt, L_tgt, nv_tgt, NUM_SAMPLES)
+def compute_losses(V, L, nv, ne, V_tgt, L_tgt, nv_tgt, ne_tgt):
+    P = sample_points_from_polylines(V, L, ne, NUM_SAMPLES)
+    P_tgt = sample_points_from_polylines(V_tgt, L_tgt, ne_tgt, NUM_SAMPLES)
     n_samples = torch.full((V.shape[0],), NUM_SAMPLES, dtype=torch.long)
     matchings = knn_match(P, n_samples, P_tgt, n_samples, bidirectional=True)
     l_chamfer = distance_loss(P, P_tgt, matchings, p=2)
-    l_edge = polyline_edge_loss(V, L, nv)
-    l_normal = polyline_normal_consistency(V, L, nv)
-    l_laplacian = polyline_laplacian_smoothing(V, L, nv)
+    l_edge = polyline_edge_loss(V, L, ne)
+    l_normal = polyline_normal_consistency(V, L, nv, ne)
+    l_laplacian = polyline_laplacian_smoothing(V, L, nv, ne)
     total = (W_CHAMFER * l_chamfer + W_EDGE * l_edge
              + W_NORMAL * l_normal + W_LAPLACIAN * l_laplacian)
     return total, l_chamfer, l_edge, l_normal, l_laplacian
 
 
 def main():
-    V_src0, L_src, nv_src, V_tgt, L_tgt, nv_tgt = build_batch()
+    V_src0, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt = build_batch()
 
     deform = torch.zeros_like(V_src0, requires_grad=True)
     optimizer = torch.optim.SGD([deform], lr=LR, momentum=MOMENTUM)
@@ -81,7 +81,7 @@ def main():
     for _ in pbar:
         optimizer.zero_grad()
         V = V_src0 + deform
-        total, lc, le, ln, ll = compute_losses(V, L_src, nv_src, V_tgt, L_tgt, nv_tgt)
+        total, lc, le, ln, ll = compute_losses(V, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt)
         total.backward()
         optimizer.step()
         pbar.set_postfix(
@@ -98,13 +98,13 @@ def main():
     with torch.no_grad():
         for i in range(BATCH_SIZE):
             total, lc, *_ = compute_losses(
-                V_final[i:i+1], L_src[i:i+1], nv_src[i:i+1],
-                V_tgt[i:i+1], L_tgt[i:i+1], nv_tgt[i:i+1],
+                V_final[i:i+1], L_src[i:i+1], nv_src[i:i+1], ne_src[i:i+1],
+                V_tgt[i:i+1], L_tgt[i:i+1], nv_tgt[i:i+1], ne_tgt[i:i+1],
             )
             print(f'  problem {i}: total={total.item():.4f} chamfer={lc.item():.4f}')
 
     plot_polylines_initial_vs_final(
-        V_src0, V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt,
+        V_src0, V_final, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt,
         'deform_polylines.png',
         title_prefix='problem',
     )

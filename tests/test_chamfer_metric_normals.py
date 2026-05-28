@@ -15,7 +15,8 @@ def _ccw_circle(n=64, radius=1.0, centre=(0.0, 0.0)):
         (torch.arange(n), (torch.arange(n) + 1) % n), dim=-1
     ).unsqueeze(0)
     nv = torch.tensor([n], dtype=torch.long)
-    return pts, L, nv
+    ne = torch.tensor([n], dtype=torch.long)  # closed cycle: #edges == #verts
+    return pts, L, nv, ne
 
 
 def test_with_normals_false_matches_legacy_keys():
@@ -58,11 +59,11 @@ def test_reversed_orientation_flips_normals_but_not_chamfer():
     # identical, so chamfer ~ 0; but every outward normal points the wrong
     # way, so 1 - cos ~ 2 with abs_cosine=False.
     torch.manual_seed(0)
-    V, L, nv = _ccw_circle(n=128)
+    V, L, nv, ne = _ccw_circle(n=128)
     L_rev = L.flip(dims=(-1,))
 
     metric = ChamferMetric(num_samples=1024, with_normals=True, abs_cosine=False)
-    out = metric((V, L, nv), (V, L_rev, nv))
+    out = metric((V, L, nv, ne), (V, L_rev, nv, ne))
 
     assert out["chamfer_sym"].item() < 5e-4
     # Each matched pair has nearly-antiparallel normals: 1 - cos ~ 2.
@@ -73,11 +74,11 @@ def test_abs_cosine_true_is_orientation_invariant():
     # Same as above but with abs_cosine=True: normal loss should be ~0 since
     # 1 - |cos| ~ 0 when normals are anti-parallel.
     torch.manual_seed(0)
-    V, L, nv = _ccw_circle(n=128)
+    V, L, nv, ne = _ccw_circle(n=128)
     L_rev = L.flip(dims=(-1,))
 
     metric = ChamferMetric(num_samples=1024, with_normals=True, abs_cosine=True)
-    out = metric((V, L, nv), (V, L_rev, nv))
+    out = metric((V, L, nv, ne), (V, L_rev, nv, ne))
 
     assert out["normal_sym"].item() < 5e-3
 
@@ -87,7 +88,7 @@ def test_batched_polylines_normal_consistency():
     # rotated case should produce a normal_sym around 1 - cos(pi/2) = 1.
     torch.manual_seed(0)
     n = 128
-    V_a, L, _ = _ccw_circle(n=n)
+    V_a, L, _, _ = _ccw_circle(n=n)
     V_b_same = V_a.clone()
 
     angles = torch.linspace(0, 2 * math.pi, n + 1)[:-1] + math.pi / 2
@@ -99,7 +100,7 @@ def test_batched_polylines_normal_consistency():
     nv_b = torch.tensor([n, n], dtype=torch.long)
 
     metric = ChamferMetric(num_samples=1024, with_normals=True, abs_cosine=False)
-    out = metric((V_A, L_b, nv_b), (V_B, L_b, nv_b))
+    out = metric((V_A, L_b, nv_b, nv_b), (V_B, L_b, nv_b, nv_b))
 
     # Same circle -> ~0; rotated circle (same point set!) -> chamfer ~0 too,
     # but normals at matched pairs may be misaligned by up to ~pi/2 worth of
@@ -119,7 +120,7 @@ def test_gradient_flow_with_normals():
     nv = torch.tensor([n], dtype=torch.long)
 
     metric = ChamferMetric(num_samples=128, with_normals=True)
-    out = metric((V_a, L, nv), (V_b, L, nv))
+    out = metric((V_a, L, nv, nv), (V_b, L, nv, nv))
     (out["chamfer_sym"] + out["normal_sym"]).sum().backward()
     assert V_a.grad is not None
     assert torch.isfinite(V_a.grad).all()

@@ -39,12 +39,12 @@ def test_fixed_match_runs_and_reduces_data_term():
     V_src_np = _circle(20, rx=1.0, ry=1.0)
     V_tgt_np = _circle(35, rx=2.0, ry=0.5, cx=0.3, cy=-0.2)
 
-    V_src, L_src, nv_src = pad_polylines([V_src_np], [_sequential_l(20)])
-    V_tgt, L_tgt, nv_tgt = pad_polylines([V_tgt_np], [_sequential_l(35)])
+    V_src, L_src, nv_src, ne_src = pad_polylines([V_src_np], [_sequential_l(20)])
+    V_tgt, L_tgt, nv_tgt, ne_tgt = pad_polylines([V_tgt_np], [_sequential_l(35)])
 
     M = 64
-    V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
-    V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
+    V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
+    V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
 
     matcher = Knn3dMatcher(bidirectional=False)
 
@@ -63,8 +63,8 @@ def test_fixed_match_runs_and_reduces_data_term():
         w_laplacian=0.1,
     )
     V_final = scenario.run(
-        (V_src_r, L_src_r, nv_src_r),
-        (V_tgt_r, L_tgt_r, nv_tgt_r),
+        (V_src_r, L_src_r, nv_src_r, ne_src_r),
+        (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r),
         matcher,
     )
 
@@ -84,19 +84,19 @@ def test_fixed_match_runs_batched():
     V_src_list = [_circle(20, rx=1.0, ry=1.0), _circle(25, rx=0.8, ry=0.8, phase=0.3)]
     V_tgt_list = [_circle(30, rx=1.5, ry=0.6), _circle(40, rx=1.2, ry=1.2, cy=0.4)]
 
-    V_src, L_src, nv_src = pad_polylines(
+    V_src, L_src, nv_src, ne_src = pad_polylines(
         V_src_list, [_sequential_l(v.shape[0]) for v in V_src_list])
-    V_tgt, L_tgt, nv_tgt = pad_polylines(
+    V_tgt, L_tgt, nv_tgt, ne_tgt = pad_polylines(
         V_tgt_list, [_sequential_l(v.shape[0]) for v in V_tgt_list])
 
     M = 48
-    V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
-    V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
+    V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
+    V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
 
     scenario = SgdFixedMatchScenario(num_iters=50)
     V_final = scenario.run(
-        (V_src_r, L_src_r, nv_src_r),
-        (V_tgt_r, L_tgt_r, nv_tgt_r),
+        (V_src_r, L_src_r, nv_src_r, ne_src_r),
+        (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r),
         Knn3dMatcher(bidirectional=False),
     )
 

@@ -59,7 +59,9 @@ class OnlineShapeSampler:
 
         V = batch.points()                                              # (B, P, 2)
         P = V.shape[1]
+        M = batch.edges.shape[0]
         L = batch.edges[None].expand(int(batch_size), -1, -1).contiguous()
         num_verts = torch.full((int(batch_size),), P, dtype=torch.long, device=device)
+        num_edges = torch.full((int(batch_size),), M, dtype=torch.long, device=device)
         shape_names = [name] * int(batch_size)
-        return V, L, num_verts, shape_names
+        return V, L, num_verts, num_edges, shape_names

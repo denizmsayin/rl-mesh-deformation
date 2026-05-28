@@ -53,8 +53,9 @@ def _resolve_device(spec):
 
 
 def _to_device(batch, device):
-    V, L, lengths, shapes = batch
-    return V.to(device), L.to(device), lengths.to(device), shapes
+    V, L, num_verts, num_edges, shapes = batch
+    return (V.to(device), L.to(device), num_verts.to(device),
+            num_edges.to(device), shapes)
 
 
 def _build_eval_subset(dataset, num_samples, seed):
@@ -86,18 +87,18 @@ def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, dev
     )
     rewards = []
     for batch_src, batch_tgt in zip(batches_src, batches_tgt):
-        V_src, L_src, nv_src, _ = _to_device(batch_src, device)
-        V_tgt, L_tgt, nv_tgt, _ = _to_device(batch_tgt, device)
-        V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
-        V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
+        V_src, L_src, nv_src, ne_src, _ = _to_device(batch_src, device)
+        V_tgt, L_tgt, nv_tgt, ne_tgt, _ = _to_device(batch_tgt, device)
+        V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
+        V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
         V_final = scenario.run(
-            (V_src_r, L_src_r, nv_src_r),
-            (V_tgt_r, L_tgt_r, nv_tgt_r),
+            (V_src_r, L_src_r, nv_src_r, ne_src_r),
+            (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r),
             matcher,
         )
         with torch.no_grad():
-            out = chamfer((V_final, L_src_r, nv_src_r),
-                          (V_tgt_r, L_tgt_r, nv_tgt_r))
+            out = chamfer((V_final, L_src_r, nv_src_r, ne_src_r),
+                          (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r))
             rewards.append(_compute_reward(out, w_chamfer, w_normal))
     return torch.cat(rewards) if rewards else torch.empty(0)
 
@@ -519,20 +520,20 @@ def train(cfg: DictConfig) -> str:
         traj = 0
         while traj < total_trajectories:
             step += 1
-            V_src, L_src, nv_src, _ = src_source.next_batch(batch_size, device)
-            V_tgt, L_tgt, nv_tgt, _ = tgt_source.next_batch(batch_size, device)
+            V_src, L_src, nv_src, ne_src, _ = src_source.next_batch(batch_size, device)
+            V_tgt, L_tgt, nv_tgt, ne_tgt, _ = tgt_source.next_batch(batch_size, device)
             B = V_src.shape[0]
             traj += B
 
-            V_src_r, L_src_r, nv_src_r = resample_uniform_polyline(
+            V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_polyline(
                 V_src, L_src, nv_src, int(cfg.M))
-            V_tgt_r, L_tgt_r, nv_tgt_r = resample_uniform_polyline(
+            V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_polyline(
                 V_tgt, L_tgt, nv_tgt, int(cfg.M))
 
             update = objective.compute(
                 matcher,
-                (V_src_r, L_src_r, nv_src_r),
-                (V_tgt_r, L_tgt_r, nv_tgt_r),
+                (V_src_r, L_src_r, nv_src_r, ne_src_r),
+                (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r),
             )
 
             optimizer.zero_grad()

@@ -42,8 +42,8 @@ def _shape_inputs():
 
 
 def _resample(V_np, M):
-    V, L, nv = pad_polylines([V_np], [_sequential_l(V_np.shape[0])])
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, M)
+    V, L, nv, _ = pad_polylines([V_np], [_sequential_l(V_np.shape[0])])
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, M)
     return V_new[0].numpy()
 
 

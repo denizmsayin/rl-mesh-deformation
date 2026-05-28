@@ -57,8 +57,9 @@ def _make_loader(dataset, batch_size: int, num_workers: int,
 
 
 def _to_device(batch, device):
-    V, L, lengths, shapes = batch
-    return V.to(device), L.to(device), lengths.to(device), shapes
+    V, L, num_verts, num_edges, shapes = batch
+    return (V.to(device), L.to(device), num_verts.to(device),
+            num_edges.to(device), shapes)
 
 
 def _resolve_device(spec: str) -> torch.device:
@@ -72,9 +73,11 @@ def _deformation_vis_tensors(
     V_final: torch.Tensor,
     L_src: torch.Tensor,
     nv_src: torch.Tensor,
+    ne_src: torch.Tensor,
     V_tgt: torch.Tensor,
     L_tgt: torch.Tensor,
     nv_tgt: torch.Tensor,
+    ne_tgt: torch.Tensor,
     *,
     max_batch: Optional[int] = None,
 ):
@@ -84,17 +87,21 @@ def _deformation_vis_tensors(
         V_final = V_final[:max_batch]
         L_src = L_src[:max_batch]
         nv_src = nv_src[:max_batch]
+        ne_src = ne_src[:max_batch]
         V_tgt = V_tgt[:max_batch]
         L_tgt = L_tgt[:max_batch]
         nv_tgt = nv_tgt[:max_batch]
+        ne_tgt = ne_tgt[:max_batch]
     return (
         V_src.detach().cpu(),
         V_final.detach().cpu(),
         L_src.detach().cpu(),
         nv_src.detach().cpu(),
+        ne_src.detach().cpu(),
         V_tgt.detach().cpu(),
         L_tgt.detach().cpu(),
         nv_tgt.detach().cpu(),
+        ne_tgt.detach().cpu(),
     )
 
 
@@ -103,9 +110,11 @@ def _write_deformation_batch_figure(
     V_final: torch.Tensor,
     L_src: torch.Tensor,
     nv_src: torch.Tensor,
+    ne_src: torch.Tensor,
     V_tgt: torch.Tensor,
     L_tgt: torch.Tensor,
     nv_tgt: torch.Tensor,
+    ne_tgt: torch.Tensor,
     out_path: str,
     *,
     first_index: int,
@@ -118,9 +127,11 @@ def _write_deformation_batch_figure(
             V_final,
             L_src,
             nv_src,
+            ne_src,
             V_tgt,
             L_tgt,
             nv_tgt,
+            ne_tgt,
             max_batch=max_batch,
         ),
         out_path,
@@ -184,21 +195,21 @@ def run(cfg: DictConfig) -> str:
                 enumerate(zip(loader_src, loader_tgt)),
                 total=len(loader_src),
                 desc="harness"):
-            V_src, L_src, nv_src, shapes_src = _to_device(batch_src, device)
-            V_tgt, L_tgt, nv_tgt, shapes_tgt = _to_device(batch_tgt, device)
+            V_src, L_src, nv_src, ne_src, shapes_src = _to_device(batch_src, device)
+            V_tgt, L_tgt, nv_tgt, ne_tgt, shapes_tgt = _to_device(batch_tgt, device)
 
             if resample_M is not None:
-                V_src, L_src, nv_src = resample_uniform_polyline(
+                V_src, L_src, nv_src, ne_src = resample_uniform_polyline(
                     V_src, L_src, nv_src, resample_M)
-                V_tgt, L_tgt, nv_tgt = resample_uniform_polyline(
+                V_tgt, L_tgt, nv_tgt, ne_tgt = resample_uniform_polyline(
                     V_tgt, L_tgt, nv_tgt, resample_M)
 
             record_this_batch = record_enabled and batch_i == 0
             if record_this_batch:
                 K_rec = int(record_cfg.first_k)
                 V_final, frames, matchings = scenario.run(
-                    (V_src, L_src, nv_src),
-                    (V_tgt, L_tgt, nv_tgt),
+                    (V_src, L_src, nv_src, ne_src),
+                    (V_tgt, L_tgt, nv_tgt, ne_tgt),
                     matcher,
                     record_every=int(record_cfg.every),
                     record_max_batch=K_rec,
@@ -215,9 +226,11 @@ def run(cfg: DictConfig) -> str:
                     frames,
                     L_src[:K_rec],
                     nv_src[:K_rec],
+                    ne_src[:K_rec],
                     V_tgt[:K_rec],
                     L_tgt[:K_rec],
                     nv_tgt[:K_rec],
+                    ne_tgt[:K_rec],
                     video_path,
                     match_idx=match_idx_vis,
                     duration_s=float(record_cfg.duration_s),
@@ -226,8 +239,8 @@ def run(cfg: DictConfig) -> str:
                 print(f"wrote deformation video {video_path}")
             else:
                 V_final = scenario.run(
-                    (V_src, L_src, nv_src),
-                    (V_tgt, L_tgt, nv_tgt),
+                    (V_src, L_src, nv_src, ne_src),
+                    (V_tgt, L_tgt, nv_tgt, ne_tgt),
                     matcher,
                 )
 
@@ -239,9 +252,11 @@ def run(cfg: DictConfig) -> str:
                     V_final,
                     L_src,
                     nv_src,
+                    ne_src,
                     V_tgt,
                     L_tgt,
                     nv_tgt,
+                    ne_tgt,
                     vis_path,
                     first_index=sample_idx,
                     dpi=vis_dpi,
@@ -259,9 +274,11 @@ def run(cfg: DictConfig) -> str:
                         V_final,
                         L_src,
                         nv_src,
+                        ne_src,
                         V_tgt,
                         L_tgt,
                         nv_tgt,
+                        ne_tgt,
                         preview_path,
                         first_index=sample_idx,
                         max_batch=8,
@@ -272,7 +289,8 @@ def run(cfg: DictConfig) -> str:
                 if vis_save_cells:
                     cells_dir = os.path.join(output_dir, "cells")
                     tensors = _deformation_vis_tensors(
-                        V_src, V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt
+                        V_src, V_final, L_src, nv_src, ne_src,
+                        V_tgt, L_tgt, nv_tgt, ne_tgt
                     )
                     save_deformation_cells(
                         *tensors,
@@ -284,8 +302,8 @@ def run(cfg: DictConfig) -> str:
                     print(f"wrote cells to {cells_dir}")
 
             with torch.no_grad():
-                poly_pred = (V_final, L_src, nv_src)
-                poly_tgt = (V_tgt, L_tgt, nv_tgt)
+                poly_pred = (V_final, L_src, nv_src, ne_src)
+                poly_tgt = (V_tgt, L_tgt, nv_tgt, ne_tgt)
                 B = V_final.shape[0]
 
                 metric_values = {}

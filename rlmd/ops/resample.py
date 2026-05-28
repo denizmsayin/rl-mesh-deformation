@@ -26,7 +26,8 @@ def resample_uniform_polyline(V, L, num_verts, M, check_l=False):
     Returns:
         V_new:  (B, M, D) float — resampled vertices.
         L_new:  (B, M, 2) long — canonical sequential edges.
-        nv_new: (B,) long — all equal to M.
+        nv_new: (B,) long — all equal to M (vertex count).
+        ne_new: (B,) long — all equal to M (edge count; closed cycle).
     """
     if check_l:
         check_sequential_l(L, num_verts)
@@ -81,5 +82,6 @@ def resample_uniform_polyline(V, L, num_verts, M, check_l=False):
     L_new = torch.stack([i_out, (i_out + 1) % M], dim=-1)
     L_new = L_new[None, :, :].expand(B, -1, -1).contiguous()
     nv_new = torch.full((B,), M, dtype=torch.long, device=device)
+    ne_new = torch.full((B,), M, dtype=torch.long, device=device)
 
-    return V_new, L_new, nv_new
+    return V_new, L_new, nv_new, ne_new

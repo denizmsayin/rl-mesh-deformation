@@ -72,13 +72,13 @@ class BanditObjective:
         self.entropy_coef = float(entropy_coef)
 
     def compute(self, matcher, poly_src: Polyline, poly_tgt: Polyline) -> Update:
-        V_src, L_src, nv_src = poly_src
-        V_tgt, _, nv_tgt = poly_tgt
+        V_src, L_src, nv_src, ne_src = poly_src
+        V_tgt, _, nv_tgt, _ = poly_tgt
 
         matchings, log_prob, entropy = matcher(V_src, nv_src, V_tgt, nv_tgt)
 
         V_final = self.scenario.run(poly_src, poly_tgt, FixedMatcher(matchings))
-        rout = self.reward((V_final, L_src, nv_src), poly_tgt)
+        rout = self.reward((V_final, L_src, nv_src, ne_src), poly_tgt)
         R = rout.reward                                              # (B,)
 
         if self.baseline.is_rollout:
@@ -109,7 +109,7 @@ class RematchObjective:
         self.credit_mode = credit_mode
 
     def compute(self, matcher, poly_src: Polyline, poly_tgt: Polyline) -> Update:
-        _, L_src, nv_src = poly_src
+        _, L_src, nv_src, ne_src = poly_src
 
         rollout = self.scenario.run_policy(poly_src, poly_tgt, matcher)
         log_prob = rollout.log_prob          # (T, B)
@@ -122,7 +122,7 @@ class RematchObjective:
         # V_final, whose reward components we also log.
         phi_list, rout_final = [], None
         for t in range(rollout.boundary_V.shape[0]):
-            rout = self.reward((rollout.boundary_V[t], L_src, nv_src), poly_tgt)
+            rout = self.reward((rollout.boundary_V[t], L_src, nv_src, ne_src), poly_tgt)
             phi_list.append(rout.reward)
             rout_final = rout
         phi = torch.stack(phi_list, dim=0)   # (T+1, B)
@@ -147,7 +147,7 @@ class RematchObjective:
                 for t in range(T):
                     rem = max(1, n - t * K)
                     refs.append(self.baseline.terminal_reward(
-                        (rollout.boundary_V[t], L_src, nv_src), poly_tgt,
+                        (rollout.boundary_V[t], L_src, nv_src, ne_src), poly_tgt,
                         num_iters=rem))
                 ref = torch.stack(refs, dim=0)                          # (T, B)
                 # SCST: A_t = G_t - (ref_t - Φ_t) = Φ_T - ref_t  (Φ_t cancels).

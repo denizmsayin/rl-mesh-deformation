@@ -65,10 +65,10 @@ def test_arc_length_uniformity_on_irregular_circle():
     # input polyline are exactly uniform.
     n = 17
     V0 = _circle(n, radius=1.0)
-    V, L, nv = pad_polylines([V0], [_sequential_l(n)])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(n)])
 
     M = 64
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, M)
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, M)
 
     P = _perimeter(V0)
     arc = _arc_length_along(V0, V_new[0].numpy())
@@ -81,19 +81,19 @@ def test_uniform_polygon_with_M_multiple_of_n():
     # corner-cutting -> euclidean segment lengths ARE uniform exactly.
     n = 17
     V0 = _circle(n, radius=1.0)
-    V, L, nv = pad_polylines([V0], [_sequential_l(n)])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(n)])
     M = n * 3
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, M)
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, M)
     seg = _segment_lengths(V_new[0].numpy())
     assert seg.std() / seg.mean() < 1e-4
 
 
 def test_square_points_lie_on_boundary():
     V0 = _square(side=2.0, per_edge=4)
-    V, L, nv = pad_polylines([V0], [_sequential_l(V0.shape[0])])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(V0.shape[0])])
 
     M = 40
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, M)
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, M)
 
     expected_P = _perimeter(V0)
     got_P = _perimeter(V_new[0].numpy())
@@ -119,18 +119,18 @@ def test_square_points_lie_on_boundary():
 def test_first_resampled_vertex_equals_first_input_vertex():
     rng = np.random.default_rng(0)
     V0 = rng.standard_normal((23, 2)).astype(np.float32) * 1.5
-    V, L, nv = pad_polylines([V0], [_sequential_l(23)])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(23)])
 
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, 50)
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, 50)
     np.testing.assert_allclose(V_new[0, 0].numpy(), V0[0], atol=1e-5)
 
 
 def test_canonical_L_and_nv_output():
     V0 = _circle(11)
-    V, L, nv = pad_polylines([V0], [_sequential_l(11)])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(11)])
 
     M = 7
-    _, L_new, nv_new = resample_uniform_polyline(V, L, nv, M)
+    _, L_new, nv_new, _ = resample_uniform_polyline(V, L, nv, M)
     expected_L = torch.tensor([[i, (i + 1) % M] for i in range(M)], dtype=torch.long)
     assert torch.equal(L_new[0], expected_L)
     assert nv_new.tolist() == [M]
@@ -139,10 +139,10 @@ def test_canonical_L_and_nv_output():
 def test_batched_variable_lengths():
     V_list = [_circle(13, radius=1.0), _square(side=2.0, per_edge=5), _circle(31, radius=0.5)]
     L_list = [_sequential_l(v.shape[0]) for v in V_list]
-    V, L, nv = pad_polylines(V_list, L_list)
+    V, L, nv, _ = pad_polylines(V_list, L_list)
 
     M = 24
-    V_new, L_new, nv_new = resample_uniform_polyline(V, L, nv, M)
+    V_new, L_new, nv_new, _ = resample_uniform_polyline(V, L, nv, M)
 
     assert V_new.shape == (3, M, 2)
     assert L_new.shape == (3, M, 2)
@@ -158,10 +158,10 @@ def test_batched_variable_lengths():
 
 def test_gradient_flows_through_V():
     V0 = _circle(20)
-    V, L, nv = pad_polylines([V0], [_sequential_l(20)])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(20)])
     V = V.detach().clone().requires_grad_(True)
 
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, 30)
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, 30)
     loss = (V_new ** 2).sum()
     loss.backward()
 
@@ -173,8 +173,8 @@ def test_gradient_flows_through_V():
 def test_idempotent_on_already_uniform_polygon():
     M = 24
     V0 = _circle(M, radius=2.0)
-    V, L, nv = pad_polylines([V0], [_sequential_l(M)])
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, M)
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(M)])
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, M)
     np.testing.assert_allclose(V_new[0].numpy(), V0, atol=1e-5)
 
 
@@ -187,9 +187,9 @@ def test_arc_length_uniformity_on_concave_shape():
     radii = np.where(np.arange(n_pts) % 2 == 0, outer_r, inner_r).astype(np.float32)
     V0 = np.stack([radii * np.cos(angles), radii * np.sin(angles)], axis=1)
 
-    V, L, nv = pad_polylines([V0], [_sequential_l(n_pts)])
+    V, L, nv, _ = pad_polylines([V0], [_sequential_l(n_pts)])
     M = 200
-    V_new, _, _ = resample_uniform_polyline(V, L, nv, M)
+    V_new, _, _, _ = resample_uniform_polyline(V, L, nv, M)
 
     P = _perimeter(V0)
     arc = _arc_length_along(V0, V_new[0].numpy())

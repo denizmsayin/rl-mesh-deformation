@@ -16,8 +16,8 @@ class SegmentStdMetric:
         num_verts : (B,) long           — valid vertex count per item
 
     Edges whose endpoints fall outside ``[0, num_verts[b])`` are masked out
-    before the std is computed. Samples with no valid edges receive a value
-    of 0.
+    before the std is computed (this excludes the -1 padding rows). Samples with
+    no valid edges receive a value of 0.
     """
 
     name = "segment_std"
@@ -27,7 +27,7 @@ class SegmentStdMetric:
 
     def __call__(self, poly_pred, poly_tgt) -> Dict[str, torch.Tensor]:
         del poly_tgt
-        V, L, n = poly_pred
+        V, L, n, _ = poly_pred
         B = V.shape[0]
         M = L.shape[1]
 

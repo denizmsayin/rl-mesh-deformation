@@ -133,12 +133,13 @@ _SRC_COLOR = "#1f77b4"
 _TGT_COLOR = "#ff7f0e"
 
 
-def _draw_poly_pair(ax, V_s, L_s, nv_s, V_t, L_t, nv_t, i):
+def _draw_poly_pair(ax, V_s, L_s, nv_s, ne_s, V_t, L_t, nv_t, ne_t, i):
     n_s, n_t = int(nv_s[i].item()), int(nv_t[i].item())
+    m_s, m_t = int(ne_s[i].item()), int(ne_t[i].item())
     v_s = V_s[i, :n_s].detach().cpu().numpy()
     v_t = V_t[i, :n_t].detach().cpu().numpy()
-    e_s = L_s[i, :n_s].cpu().numpy()
-    e_t = L_t[i, :n_t].cpu().numpy()
+    e_s = L_s[i, :m_s].cpu().numpy()
+    e_t = L_t[i, :m_t].cpu().numpy()
     draw_edges(ax, v_s, e_s, _SRC_COLOR)
     draw_edges(ax, v_t, e_t, _TGT_COLOR)
     all_pts = np.vstack([v_s, v_t])
@@ -156,9 +157,11 @@ def plot_polylines_initial_vs_final(
     V_final,
     L_src,
     nv_src,
+    ne_src,
     V_tgt,
     L_tgt,
     nv_tgt,
+    ne_tgt,
     out_path,
     *,
     dpi=150,
@@ -175,8 +178,8 @@ def plot_polylines_initial_vs_final(
     axes[0, 0].set_title("initial", fontsize=11)
     axes[0, 1].set_title("final", fontsize=11)
     for i in range(B):
-        _draw_poly_pair(axes[i, 0], V_init, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
-        _draw_poly_pair(axes[i, 1], V_final, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+        _draw_poly_pair(axes[i, 0], V_init, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt, i)
+        _draw_poly_pair(axes[i, 1], V_final, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt, i)
         axes[i, 0].set_ylabel(f"{title_prefix}\n{first_index + i}", fontsize=10)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -187,9 +190,11 @@ def save_deformation_cells(
     V_final,
     L_src,
     nv_src,
+    ne_src,
     V_tgt,
     L_tgt,
     nv_tgt,
+    ne_tgt,
     out_dir,
     *,
     dpi=150,
@@ -209,7 +214,7 @@ def save_deformation_cells(
         global_i = first_index + i
         for V_col, label in ((V_init, "src"), (V_final, "tgt")):
             fig, ax = plt.subplots(1, 1, figsize=(2.4, 2.75))
-            _draw_poly_pair(ax, V_col, L_src, nv_src, V_tgt, L_tgt, nv_tgt, i)
+            _draw_poly_pair(ax, V_col, L_src, nv_src, ne_src, V_tgt, L_tgt, nv_tgt, ne_tgt, i)
             fig.savefig(
                 os.path.join(out_dir, f"{label}_{global_i}.{fmt}"),
                 dpi=dpi,
@@ -223,9 +228,11 @@ def render_deformation_video(
     frames,
     L_src,
     nv_src,
+    ne_src,
     V_tgt,
     L_tgt,
     nv_tgt,
+    ne_tgt,
     out_path,
     *,
     match_idx=None,
@@ -255,6 +262,8 @@ def render_deformation_video(
     T, K = frames_np.shape[0], frames_np.shape[1]
     nv_s = nv_src.cpu().numpy()
     nv_t = nv_tgt.cpu().numpy()
+    ne_s = ne_src.cpu().numpy()
+    ne_t = ne_tgt.cpu().numpy()
     L_s = L_src.cpu().numpy()
     L_t = L_tgt.cpu().numpy()
     V_t = V_tgt.cpu().numpy()
@@ -279,8 +288,8 @@ def render_deformation_video(
         n_s = int(nv_s[i])
         n_t = int(nv_t[i])
         v_t = V_t[i, :n_t]
-        e_t = L_t[i, :n_t]
-        e_s = L_s[i, :n_s]
+        e_t = L_t[i, :int(ne_t[i])]
+        e_s = L_s[i, :int(ne_s[i])]
 
         tgt_seg = np.stack((v_t[e_t[:, 0]], v_t[e_t[:, 1]]), axis=1)
         ax.add_collection(LineCollection(tgt_seg, colors=TGT_COLOR,

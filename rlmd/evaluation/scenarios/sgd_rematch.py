@@ -5,7 +5,7 @@ import torch
 
 from rlmd.evaluation.scenarios._inner import _inner_loss_compiled
 
-Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts)
+Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts, num_edges)
 
 
 @dataclass
@@ -75,8 +75,8 @@ class SgdRematchScenario:
         record_every: Optional[int] = None,
         record_max_batch: Optional[int] = None,
     ) -> RematchRollout:
-        V_src, L_src, nv_src = poly_src
-        V_tgt, _, nv_tgt = poly_tgt
+        V_src, L_src, nv_src, ne_src = poly_src
+        V_tgt, _, nv_tgt, _ = poly_tgt
 
         deform = torch.zeros_like(V_src, requires_grad=True)
         optimizer = torch.optim.SGD([deform], lr=self.lr, momentum=self.momentum)
@@ -113,7 +113,7 @@ class SgdRematchScenario:
             for _ in range(seg):
                 optimizer.zero_grad()
                 total, V = _inner_loss_compiled(
-                    V_src, deform, V_tgt, matchings, L_src, nv_src,
+                    V_src, deform, V_tgt, matchings, L_src, nv_src, ne_src,
                     self.w_data, self.w_edge, self.w_normal, self.w_laplacian,
                     self.distance_p,
                 )

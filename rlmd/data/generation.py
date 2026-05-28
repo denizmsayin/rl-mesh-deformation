@@ -371,34 +371,82 @@ class Blob(BaseShape):
 
 
 
+class Octagon(BaseShape):
+    """
+    Axis-aligned regular octagon (flat top/bottom and flat left/right sides).
+
+    Vertices sit at angles 22.5° + k·45°, so the left/right sides are vertical
+    and the top/bottom sides are horizontal. That orientation is what lets a
+    square grid of octagons abut along full edges in both directions (the
+    truncated-square tiling), which `Grid` relies on for welding.
+    """
+
+    def compute_points(self, num_points=120):
+        n_vertices = 8
+        angles = np.linspace(0, 2 * np.pi, n_vertices, endpoint=False) + np.pi / n_vertices
+        xx = np.cos(angles)
+        yy = np.sin(angles)
+
+        points_per_edge = max(1, num_points // n_vertices)
+        total_points = n_vertices * points_per_edge
+        x = np.empty(total_points, dtype=float)
+        y = np.empty(total_points, dtype=float)
+
+        for i in range(n_vertices):
+            x_i, y_i = xx[i], yy[i]
+            x1, y1 = xx[(i + 1) % n_vertices], yy[(i + 1) % n_vertices]
+
+            t = np.linspace(0, 1, points_per_edge, endpoint=False)
+            x_edge = x_i + t * (x1 - x_i)
+            y_edge = y_i + t * (y1 - y_i)
+
+            start = i * points_per_edge
+            end = start + points_per_edge
+            x[start:end] = x_edge
+            y[start:end] = y_edge
+
+        return np.stack((x, y), axis=-1)
+
+
 class Grid(BaseShape):
     """
     A rows x cols grid of identical cell shapes, deformed/transformed as one unit.
 
-    Points are the concatenation of each cell's boundary points (cells visited
-    row-major). Cells are spaced `spacing` apart center-to-center; for unit-radius
-    cells (circle, hexagon) spacing=2.0 makes neighbors touch.
+    Each cell is one base shape; cells are laid out row-major and spaced so that
+    neighbours abut along their bounding boxes (``spacing=None``, the default,
+    uses the cell's bbox width/height as the center-to-center step). Coincident
+    boundary points where cells meet are then *welded* into shared vertices, so
+    the whole grid is a single connected graph rather than disjoint loops:
 
-    Edges are emitted in two blocks:
-      1. boundary cycles — exactly one edge per vertex (so #boundary_edges ==
-         #vertices), which keeps the project's `num_verts`-as-edge-count
-         invariant intact for length-weighted point sampling.
-      2. bridge edges — one per adjacent cell pair (right + down neighbours),
-         joining the closest vertex of each cell so the grid is a single
-         connected graph. These come last and are near-zero length, so the
-         sampling mask (which keeps only the first #vertices edges) ignores them
-         while a graph network can still see the connectivity.
+      - octagons (axis-aligned) share a full vertical edge with horizontal
+        neighbours and a full horizontal edge with vertical neighbours, so a
+        whole run of points along each shared side welds together;
+      - circles/hexagons only touch at a single point, so just that point welds.
+
+    Because welding merges vertices and de-duplicates the shared wall edges, the
+    grid no longer satisfies ``#edges == #vertices``. The shape therefore reports
+    its own ``num_verts`` and ``num_edges`` independently, and the rest of the
+    pipeline carries both counts in the polyline tuple.
+
+    Args:
+        num_points: total boundary points across all cells (split evenly).
+        cell_shape: registered base-shape name used for every cell.
+        rows, cols: grid dimensions.
+        spacing: center-to-center step. None = abut via the cell bbox (cells
+            share sides/points); a float overrides both axes with that distance.
+        weld_decimals: coordinate rounding (decimal places) used to detect
+            coincident points for welding.
     """
 
-    def __init__(self, num_points=240, cell_shape="circle", rows=2, cols=2,
-                 spacing=2.0, bridges=True):
+    def __init__(self, num_points=480, cell_shape="octagon", rows=2, cols=2,
+                 spacing=None, weld_decimals=6):
         if rows < 1 or cols < 1:
             raise ValueError("rows and cols must be >= 1")
         self.cell_shape = cell_shape
         self.rows = int(rows)
         self.cols = int(cols)
-        self.spacing = float(spacing)
-        self.bridges = bool(bridges)
+        self.spacing = spacing
+        self.weld_decimals = int(weld_decimals)
         super().__init__(num_points=num_points)
 
     _CELL_CLASSES = None
@@ -412,10 +460,11 @@ class Grid(BaseShape):
                 "triangle": Triangle,
                 "star": Star,
                 "polygon": RegularPolygon,
+                "octagon": Octagon,
             }
         return cls._CELL_CLASSES
 
-    def compute_points(self, num_points=240):
+    def compute_points(self, num_points=480):
         cell_classes = self._cell_classes()
         if self.cell_shape not in cell_classes:
             raise ValueError(
@@ -425,48 +474,73 @@ class Grid(BaseShape):
 
         n_cells = self.rows * self.cols
         per_cell = max(1, num_points // n_cells)
-        cell_pts = cell_classes[self.cell_shape](num_points=per_cell).get_points()
+        cell = cell_classes[self.cell_shape](num_points=per_cell)
+        cell_pts = cell.get_points()
+        cell_edges = cell.get_edges()
         self._per_cell = cell_pts.shape[0]
 
-        cx = (self.cols - 1) / 2.0 * self.spacing
-        cy = (self.rows - 1) / 2.0 * self.spacing
+        if self.spacing is None:
+            sx = float(cell_pts[:, 0].max() - cell_pts[:, 0].min())
+            sy = float(cell_pts[:, 1].max() - cell_pts[:, 1].min())
+        else:
+            sx = sy = float(self.spacing)
 
-        parts = []
+        cx = (self.cols - 1) / 2.0 * sx
+        cy = (self.rows - 1) / 2.0 * sy
+
+        pts_parts = []
+        edge_parts = []
         for i in range(self.rows):
             for j in range(self.cols):
-                center = np.array([j * self.spacing - cx, cy - i * self.spacing])
-                parts.append(cell_pts + center)
+                c = i * self.cols + j
+                center = np.array([j * sx - cx, cy - i * sy])
+                pts_parts.append(cell_pts + center)
+                edge_parts.append(cell_edges + c * self._per_cell)
 
-        return np.concatenate(parts, axis=0)
+        raw_pts = np.concatenate(pts_parts, axis=0)
+        raw_edges = np.concatenate(edge_parts, axis=0)
 
-    def _closest_pair(self, c_a, c_b):
-        per = self._per_cell
-        a = self.points[c_a * per:(c_a + 1) * per]
-        b = self.points[c_b * per:(c_b + 1) * per]
-        d = np.linalg.norm(a[:, None, :] - b[None, :, :], axis=-1)
-        ia, ib = np.unravel_index(np.argmin(d), d.shape)
-        return [c_a * per + int(ia), c_b * per + int(ib)]
+        pts, self._edges = self._weld(raw_pts, raw_edges)
+        return pts
+
+    def _weld(self, pts, edges):
+        """Merge coincident points and de-duplicate the resulting edges.
+
+        Points equal to ``weld_decimals`` places collapse to one vertex (placed
+        at the mean of the merged positions). Edges are remapped onto the welded
+        indices; degenerate (a==a) edges are dropped and each undirected edge is
+        kept once, preserving the direction of its first occurrence.
+        """
+        quant = np.round(pts, self.weld_decimals)
+        _, first_idx, inverse = np.unique(
+            quant, axis=0, return_index=True, return_inverse=True
+        )
+        inverse = inverse.reshape(-1)
+        n_unique = first_idx.shape[0]
+
+        sums = np.zeros((n_unique, 2), dtype=float)
+        counts = np.zeros(n_unique, dtype=float)
+        np.add.at(sums, inverse, pts)
+        np.add.at(counts, inverse, 1.0)
+        new_pts = sums / counts[:, None]
+
+        remapped = inverse[edges]
+        seen = set()
+        kept = []
+        for a, b in remapped:
+            a, b = int(a), int(b)
+            if a == b:
+                continue
+            key = (a, b) if a < b else (b, a)
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append([a, b])
+
+        return new_pts, np.asarray(kept, dtype=int)
 
     def compute_edges(self):
-        per = self._per_cell
-        n_cells = self.rows * self.cols
-
-        edges = []
-        for c in range(n_cells):
-            off = c * per
-            for k in range(per):
-                edges.append([off + k, off + (k + 1) % per])
-
-        if self.bridges:
-            for i in range(self.rows):
-                for j in range(self.cols):
-                    c = i * self.cols + j
-                    if j + 1 < self.cols:
-                        edges.append(self._closest_pair(c, i * self.cols + (j + 1)))
-                    if i + 1 < self.rows:
-                        edges.append(self._closest_pair(c, (i + 1) * self.cols + j))
-
-        return np.asarray(edges, dtype=int)
+        return self._edges
 
 
 class TransformedShapeBatch:
@@ -694,6 +768,7 @@ class ShapeGenerator:
             "heart": Heart,
             "moon": Moon,
             "blob": Blob,
+            "octagon": Octagon,
             "grid": Grid,
         }
 

@@ -5,6 +5,12 @@ import torch
 from rlmd.evaluation.metrics.self_intersection import SelfIntersectionMetric
 
 
+def _poly(V, L, n):
+    """Build a (V, L, num_verts, num_edges) polyline tuple for the metric API."""
+    ne = (L >= 0).all(dim=-1).sum(dim=-1).long()
+    return (V, L, n, ne)
+
+
 def _closed_polygon(pts):
     """Build (V, L, n) for a single closed polygon from a list of (x, y)."""
     V = torch.tensor(pts, dtype=torch.float32).unsqueeze(0)
@@ -19,14 +25,14 @@ def test_name_and_output_shape():
     metric = SelfIntersectionMetric()
     assert metric.name == "self_intersection"
     V, L, n = _closed_polygon([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
-    out = metric((V, L, n), (V, L, n))
+    out = metric(_poly(V, L, n), _poly(V, L, n))
     assert set(out.keys()) == {"self_intersection"}
     assert out["self_intersection"].shape == (1,)
 
 
 def test_simple_square_has_no_self_intersections():
     V, L, n = _closed_polygon([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
-    out = SelfIntersectionMetric()((V, L, n), (V, L, n))
+    out = SelfIntersectionMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["self_intersection"].item() == 0.0
 
 
@@ -34,7 +40,7 @@ def test_figure_eight_has_one_self_intersection():
     # Bowtie / figure-eight: square with two diagonally-opposite vertices
     # swapped in the visiting order. Edges (0,1) and (2,3) cross once.
     V, L, n = _closed_polygon([(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)])
-    out = SelfIntersectionMetric()((V, L, n), (V, L, n))
+    out = SelfIntersectionMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["self_intersection"].item() == 1.0
 
 
@@ -49,7 +55,7 @@ def test_pentagram_has_five_self_intersections():
         (torch.arange(5), (torch.arange(5) + 1) % 5), dim=-1
     ).unsqueeze(0)
     n = torch.tensor([5])
-    out = SelfIntersectionMetric()((V, L, n), (V, L, n))
+    out = SelfIntersectionMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["self_intersection"].item() == 5.0
 
 
@@ -60,7 +66,7 @@ def test_ccw_circle_has_no_self_intersections():
     L = torch.stack(
         (torch.arange(n), (torch.arange(n) + 1) % n), dim=-1
     ).unsqueeze(0)
-    out = SelfIntersectionMetric()((V, L, torch.tensor([n])), (V, L, torch.tensor([n])))
+    out = SelfIntersectionMetric()(_poly(V, L, torch.tensor([n])), _poly(V, L, torch.tensor([n])))
     assert out["self_intersection"].item() == 0.0
 
 
@@ -75,7 +81,7 @@ def test_padding_is_ignored():
         [-1, -1], [-1, -1],
     ]])
     n = torch.tensor([4])
-    out = SelfIntersectionMetric()((V, L, n), (V, L, n))
+    out = SelfIntersectionMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["self_intersection"].item() == 0.0
 
 
@@ -89,8 +95,8 @@ def test_out_of_range_edges_are_ignored():
     ]])
     n_full = torch.tensor([4])
     n_clip = torch.tensor([2])  # only edges referencing verts {0,1} are valid
-    out_full = SelfIntersectionMetric()((V, L, n_full), (V, L, n_full))
-    out_clip = SelfIntersectionMetric()((V, L, n_clip), (V, L, n_clip))
+    out_full = SelfIntersectionMetric()(_poly(V, L, n_full), _poly(V, L, n_full))
+    out_clip = SelfIntersectionMetric()(_poly(V, L, n_clip), _poly(V, L, n_clip))
     assert out_full["self_intersection"].item() == 0.0
     assert out_clip["self_intersection"].item() == 0.0
 
@@ -103,7 +109,7 @@ def test_batched_independence():
         (torch.arange(4), (torch.arange(4) + 1) % 4), dim=-1
     ).unsqueeze(0).expand(2, -1, -1).contiguous()
     n = torch.tensor([4, 4])
-    out = SelfIntersectionMetric()((V, L, n), (V, L, n))
+    out = SelfIntersectionMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["self_intersection"].tolist() == [0.0, 1.0]
 
 
@@ -118,5 +124,5 @@ def test_shared_endpoint_is_not_counted():
         [0, 1], [1, 0], [0, 2],
     ]])
     n = torch.tensor([3])
-    out = SelfIntersectionMetric()((V, L, n), (V, L, n))
+    out = SelfIntersectionMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["self_intersection"].item() == 0.0

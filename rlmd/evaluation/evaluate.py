@@ -123,8 +123,8 @@ def main(cfg: DictConfig):
         with torch.no_grad():
             for batch_idx, (batch_in, batch_target) in enumerate(zip(dataloader, dataloader_target)):
 
-                vertices_in, edges_in, lengths_in, shapes_in = batch_in
-                vertices_target, edges_target, lengths_target, shapes_target = batch_target
+                vertices_in, edges_in, lengths_in, _, shapes_in = batch_in
+                vertices_target, edges_target, lengths_target, _, shapes_target = batch_target
 
                 vertices_in = vertices_in.to(device)
                 edges_in = edges_in.to(device)

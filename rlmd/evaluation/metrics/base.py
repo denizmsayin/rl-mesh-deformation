@@ -11,7 +11,7 @@ class Metric(Protocol):
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
-            poly_pred, poly_tgt: (V, L, num_verts) tuples (padded).
+            poly_pred, poly_tgt: (V, L, num_verts, num_edges) tuples (padded).
 
         Returns:
             dict mapping a sub-metric name to a (B,) tensor of per-sample values.

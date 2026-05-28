@@ -6,7 +6,7 @@ import torch
 from rlmd.evaluation.scenarios._inner import _inner_loss_compiled
 
 
-Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts)
+Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts, num_edges)
 
 
 @dataclass
@@ -54,8 +54,8 @@ class SgdFixedMatchScenario:
         record_every: Optional[int] = None,
         record_max_batch: Optional[int] = None,
     ):
-        V_src, L_src, nv_src = poly_src
-        V_tgt, _, nv_tgt = poly_tgt
+        V_src, L_src, nv_src, ne_src = poly_src
+        V_tgt, _, nv_tgt, _ = poly_tgt
 
         with torch.no_grad():
             matchings = matcher(V_src, nv_src, V_tgt, nv_tgt)
@@ -72,7 +72,7 @@ class SgdFixedMatchScenario:
         for i in range(self.num_iters):
             optimizer.zero_grad()
             total, V = _inner_loss_compiled(
-                V_src, deform, V_tgt, matchings, L_src, nv_src,
+                V_src, deform, V_tgt, matchings, L_src, nv_src, ne_src,
                 self.w_data, self.w_edge, self.w_normal, self.w_laplacian,
                 self.distance_p,
             )

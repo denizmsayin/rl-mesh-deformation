@@ -80,8 +80,8 @@ class RolloutBaseline:
         scen = (self.scenario if num_iters is None
                 else replace(self.scenario, num_iters=int(num_iters)))
         V_final = scen.run(poly_src, poly_tgt, self.matcher)
-        _, L_src, nv_src = poly_src
-        return self.reward((V_final, L_src, nv_src), poly_tgt).reward
+        _, L_src, nv_src, ne_src = poly_src
+        return self.reward((V_final, L_src, nv_src, ne_src), poly_tgt).reward
 
 
 def build_baseline(baseline_cfg, *, training_scenario, reward: CompositeChamferReward,

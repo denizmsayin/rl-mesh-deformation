@@ -171,13 +171,14 @@ class ShapeDiskDataset(Dataset):
 
             vertices = base_points @ linear_matrix.T + translation
 
-        length = torch.tensor(vertices.shape[0], dtype=torch.long)
+        num_verts = torch.tensor(vertices.shape[0], dtype=torch.long)
+        num_edges = torch.tensor(edges.shape[0], dtype=torch.long)
 
-        return vertices, edges, length, shape
+        return vertices, edges, num_verts, num_edges, shape
 
 
 def shape_collate_fn(batch):
-    vertices_list, edges_list, lengths_list, shapes_list = zip(*batch)
+    vertices_list, edges_list, num_verts_list, num_edges_list, shapes_list = zip(*batch)
 
     vertices = pad_sequence(
         vertices_list,
@@ -191,11 +192,12 @@ def shape_collate_fn(batch):
         padding_value=-1,
     ).long()
 
-    lengths = torch.stack(lengths_list).long()
+    num_verts = torch.stack(num_verts_list).long()
+    num_edges = torch.stack(num_edges_list).long()
 
     shapes = list(shapes_list)
 
-    return vertices, edges, lengths, shapes
+    return vertices, edges, num_verts, num_edges, shapes
 
 
 def make_shape_dataloader(

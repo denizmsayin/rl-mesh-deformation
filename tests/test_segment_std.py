@@ -5,6 +5,12 @@ import torch
 from rlmd.evaluation.metrics.segment_std import SegmentStdMetric
 
 
+def _poly(V, L, n):
+    """Build a (V, L, num_verts, num_edges) polyline tuple for the metric API."""
+    ne = (L >= 0).all(dim=-1).sum(dim=-1).long()
+    return (V, L, n, ne)
+
+
 def _segments_std_loop(points, connect, lengths, unbiased=False):
     """Reference loop implementation mirroring the original segments_std."""
     B = points.shape[0]
@@ -39,7 +45,7 @@ def test_returns_per_sample_vector_and_name():
         [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]],
     ])
     n = torch.tensor([3, 4, 5])
-    out = metric((V, L, n), (V, L, n))
+    out = metric(_poly(V, L, n), _poly(V, L, n))
     assert set(out.keys()) == {"segment_std"}
     assert out["segment_std"].shape == (3,)
     assert torch.isfinite(out["segment_std"]).all()
@@ -56,7 +62,7 @@ def test_matches_loop_reference_with_padding():
     # masking logic.
     n = torch.tensor([N, N - 1, N - 3, N])
     ref = _segments_std_loop(V, L, n, unbiased=False)
-    out = SegmentStdMetric()((V, L, n), (V, L, n))
+    out = SegmentStdMetric()(_poly(V, L, n), _poly(V, L, n))
     torch.testing.assert_close(out["segment_std"], ref)
 
 
@@ -65,7 +71,7 @@ def test_uniform_polygon_has_zero_std():
     V = torch.stack([torch.cos(angles), torch.sin(angles)], dim=-1).unsqueeze(0)
     L = torch.tensor([[[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]]])
     n = torch.tensor([5])
-    out = SegmentStdMetric()((V, L, n), (V, L, n))
+    out = SegmentStdMetric()(_poly(V, L, n), _poly(V, L, n))
     assert out["segment_std"].shape == (1,)
     assert out["segment_std"].item() < 1e-6
 
@@ -74,7 +80,7 @@ def test_no_valid_edges_returns_zero():
     V = torch.randn(2, 3, 2)
     L = torch.full((2, 4, 2), -1, dtype=torch.long)
     n = torch.tensor([3, 3])
-    out = SegmentStdMetric()((V, L, n), (V, L, n))
+    out = SegmentStdMetric()(_poly(V, L, n), _poly(V, L, n))
     torch.testing.assert_close(out["segment_std"], torch.zeros(2))
 
 
@@ -86,7 +92,7 @@ def test_unbiased_flag_matches_loop():
         [[0, 1], [1, 2], [2, 3], [3, 0], [-1, -1]],
     ])
     n = torch.tensor([6, 4])
-    out = SegmentStdMetric(unbiased=True)((V, L, n), (V, L, n))
+    out = SegmentStdMetric(unbiased=True)(_poly(V, L, n), _poly(V, L, n))
     ref = _segments_std_loop(V, L, n, unbiased=True)
     torch.testing.assert_close(out["segment_std"], ref)
 
@@ -97,7 +103,7 @@ def test_known_value_two_segments():
     V = torch.tensor([[[0.0, 0.0], [1.0, 0.0], [3.0, 0.0]]])
     L = torch.tensor([[[0, 1], [1, 2]]])
     n = torch.tensor([3])
-    out = SegmentStdMetric()((V, L, n), (V, L, n))
+    out = SegmentStdMetric()(_poly(V, L, n), _poly(V, L, n))
     torch.testing.assert_close(out["segment_std"], torch.tensor([0.5]))
 
 
@@ -107,13 +113,13 @@ def test_independent_across_batch_items():
     V1 = torch.randn(1, 5, 2)
     L1 = torch.tensor([[[0, 1], [1, 2], [2, 3], [3, 4]]])
     n1 = torch.tensor([5])
-    single = SegmentStdMetric()((V1, L1, n1), (V1, L1, n1))["segment_std"]
+    single = SegmentStdMetric()(_poly(V1, L1, n1), _poly(V1, L1, n1))["segment_std"]
 
     V2 = torch.randn(1, 5, 2) * 100.0  # very different scale
     V = torch.cat([V1, V2], dim=0)
     L = torch.cat([L1, L1], dim=0)
     n = torch.cat([n1, n1], dim=0)
-    batched = SegmentStdMetric()((V, L, n), (V, L, n))["segment_std"]
+    batched = SegmentStdMetric()(_poly(V, L, n), _poly(V, L, n))["segment_std"]
     torch.testing.assert_close(batched[:1], single)
 
 
@@ -124,7 +130,7 @@ def test_gradient_flows_through_vertices():
         [[0, 1], [1, 2], [2, 3], [-1, -1]],
     ])
     n = torch.tensor([5, 4])
-    out = SegmentStdMetric()((V, L, n), (V, L, n))
+    out = SegmentStdMetric()(_poly(V, L, n), _poly(V, L, n))
     out["segment_std"].sum().backward()
     assert V.grad is not None
     assert torch.isfinite(V.grad).all()

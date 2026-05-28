@@ -23,10 +23,10 @@ def _circle(n, rx=1.0, ry=1.0, phase=0.0):
 
 
 def _resample_pair(V_src, V_tgt, M):
-    Vs, Ls, ns = pad_polylines([V_src], [_sequential_l(V_src.shape[0])])
-    Vt, Lt, nt = pad_polylines([V_tgt], [_sequential_l(V_tgt.shape[0])])
-    Vs, _, ns = resample_uniform_polyline(Vs, Ls, ns, M)
-    Vt, _, nt = resample_uniform_polyline(Vt, Lt, nt, M)
+    Vs, Ls, ns, _ = pad_polylines([V_src], [_sequential_l(V_src.shape[0])])
+    Vt, Lt, nt, _ = pad_polylines([V_tgt], [_sequential_l(V_tgt.shape[0])])
+    Vs, _, ns, _ = resample_uniform_polyline(Vs, Ls, ns, M)
+    Vt, _, nt, _ = resample_uniform_polyline(Vt, Lt, nt, M)
     return Vs, ns, Vt, nt
 
 

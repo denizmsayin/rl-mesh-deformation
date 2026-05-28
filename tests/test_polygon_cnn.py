@@ -52,7 +52,7 @@ def test_check_sequential_l_passes_on_valid():
     rng = np.random.default_rng(0)
     V1, L1 = _random_polygon(n1, rng)
     V2, L2 = _random_polygon(n2, rng)
-    _, L, num_verts = pad_polylines([V1, V2], [L1, L2])
+    _, L, num_verts, _ = pad_polylines([V1, V2], [L1, L2])
     # Should not raise.
     check_sequential_l(L, num_verts)
 
@@ -63,7 +63,7 @@ def test_check_sequential_l_raises_on_shuffled():
     V, L = _random_polygon(n, rng)
     perm = rng.permutation(n)
     L_bad = L[perm]
-    _, L_pad, num_verts = pad_polylines([V], [L_bad])
+    _, L_pad, num_verts, _ = pad_polylines([V], [L_bad])
     with pytest.raises(ValueError):
         check_sequential_l(L_pad, num_verts)
 
@@ -72,7 +72,7 @@ def test_cnn_output_shape_and_masking():
     torch.manual_seed(0)
     rng = np.random.default_rng(2)
     Vs, Ls = zip(*[_random_polygon(n, rng) for n in [10, 14, 7]])
-    V, L, num_verts = pad_polylines(list(Vs), list(Ls))
+    V, L, num_verts, _ = pad_polylines(list(Vs), list(Ls))
 
     model = PolygonCNN(in_channels=2, hidden_channels=(16, 32), out_channels=8, kernel_size=5)
     model.eval()
@@ -99,10 +99,10 @@ def test_cnn_unaffected_by_batch_padding():
     model = PolygonCNN(in_channels=2, hidden_channels=(16,), out_channels=4, kernel_size=5)
     model.eval()
 
-    V_a, L_a, n_a = pad_polylines([V_small], [L_small])
+    V_a, L_a, n_a, _ = pad_polylines([V_small], [L_small])
     out_a = model(V_a, L_a, n_a)
 
-    V_b, L_b, n_b = pad_polylines([V_small, V_big], [L_small, L_big])
+    V_b, L_b, n_b, _ = pad_polylines([V_small, V_big], [L_small, L_big])
     out_b = model(V_b, L_b, n_b)
 
     # Compare valid region of the small polygon across the two batches.
@@ -121,12 +121,12 @@ def test_cnn_rotation_equivariant_along_cycle():
     model = PolygonCNN(in_channels=2, hidden_channels=(16,), out_channels=4, kernel_size=5)
     model.eval()
 
-    V, L, num_verts = pad_polylines([V_np], [L_np])
+    V, L, num_verts, _ = pad_polylines([V_np], [L_np])
     out = model(V, L, num_verts)
 
     shift = 4
     V_rot_np = np.roll(V_np, -shift, axis=0)
-    V_rot, L_rot, n_rot = pad_polylines([V_rot_np], [_sequential_l(n)])
+    V_rot, L_rot, n_rot, _ = pad_polylines([V_rot_np], [_sequential_l(n)])
     out_rot = model(V_rot, L_rot, n_rot)
 
     # out_rot[i] should equal out[(i + shift) % n].

@@ -29,7 +29,7 @@ class SelfIntersectionMetric:
 
     def __call__(self, poly_pred, poly_tgt) -> Dict[str, torch.Tensor]:
         del poly_tgt
-        V, L, n = poly_pred
+        V, L, n, _ = poly_pred
         B, M, _ = L.shape
 
         n_b = n.view(B, 1, 1)

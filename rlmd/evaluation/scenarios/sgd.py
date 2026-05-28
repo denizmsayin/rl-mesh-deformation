@@ -12,7 +12,7 @@ from rlmd.ops import (
 )
 
 
-Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts)
+Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts, num_edges)
 
 
 @dataclass
@@ -45,8 +45,8 @@ class SgdScenario:
         record_every: Optional[int] = None,
         record_max_batch: Optional[int] = None,
     ):
-        V_src, L_src, nv_src = poly_src
-        V_tgt, L_tgt, nv_tgt = poly_tgt
+        V_src, L_src, nv_src, ne_src = poly_src
+        V_tgt, L_tgt, nv_tgt, ne_tgt = poly_tgt
 
         deform = torch.zeros_like(V_src, requires_grad=True)
         optimizer = torch.optim.SGD([deform], lr=self.lr, momentum=self.momentum)
@@ -67,13 +67,13 @@ class SgdScenario:
             V = V_src + deform
             if frames is not None and i % record_every == 0:
                 _snapshot(V)
-            P = sample_points_from_polylines(V, L_src, nv_src, self.num_samples)
-            P_tgt = sample_points_from_polylines(V_tgt, L_tgt, nv_tgt, self.num_samples)
+            P = sample_points_from_polylines(V, L_src, ne_src, self.num_samples)
+            P_tgt = sample_points_from_polylines(V_tgt, L_tgt, ne_tgt, self.num_samples)
             matchings = matcher(P, n_samples_src, P_tgt, n_samples_tgt)
             l_chamfer = distance_loss(P, P_tgt, matchings, p=self.distance_p)
-            l_edge = polyline_edge_loss(V, L_src, nv_src)
-            l_normal = polyline_normal_consistency(V, L_src, nv_src)
-            l_laplacian = polyline_laplacian_smoothing(V, L_src, nv_src)
+            l_edge = polyline_edge_loss(V, L_src, ne_src)
+            l_normal = polyline_normal_consistency(V, L_src, nv_src, ne_src)
+            l_laplacian = polyline_laplacian_smoothing(V, L_src, nv_src, ne_src)
             total = (self.w_chamfer * l_chamfer
                      + self.w_edge * l_edge
                      + self.w_normal * l_normal

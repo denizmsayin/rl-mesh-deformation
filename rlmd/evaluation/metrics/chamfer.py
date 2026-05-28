@@ -72,19 +72,19 @@ class ChamferMetric:
         return d, dn
 
     def __call__(self, poly_a, poly_b) -> Dict[str, torch.Tensor]:
-        V_a, L_a, n_a = poly_a
-        V_b, L_b, n_b = poly_b
+        V_a, L_a, _, ne_a = poly_a
+        V_b, L_b, _, ne_b = poly_b
 
         if self.with_normals:
             pts_a, nrm_a = sample_points_from_polylines(
-                V_a, L_a, n_a, self.num_samples, return_normals=True
+                V_a, L_a, ne_a, self.num_samples, return_normals=True
             )
             pts_b, nrm_b = sample_points_from_polylines(
-                V_b, L_b, n_b, self.num_samples, return_normals=True
+                V_b, L_b, ne_b, self.num_samples, return_normals=True
             )
         else:
-            pts_a = sample_points_from_polylines(V_a, L_a, n_a, self.num_samples)
-            pts_b = sample_points_from_polylines(V_b, L_b, n_b, self.num_samples)
+            pts_a = sample_points_from_polylines(V_a, L_a, ne_a, self.num_samples)
+            pts_b = sample_points_from_polylines(V_b, L_b, ne_b, self.num_samples)
             nrm_a = nrm_b = None
 
         d_a2b, dn_a2b = self._one_direction(pts_a, pts_b, nrm_a, nrm_b)

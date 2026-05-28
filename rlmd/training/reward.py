@@ -14,7 +14,7 @@ import torch
 
 from rlmd.evaluation.metrics import ChamferMetric
 
-Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts)
+Polyline = Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]  # (V, L, num_verts, num_edges)
 
 
 @dataclass
@@ -27,7 +27,7 @@ class RewardOut:
 
 
 class CompositeChamferReward:
-    """Callable Φ over a pair of (V, L, num_verts) polylines.
+    """Callable Φ over a pair of (V, L, num_verts, num_edges) polylines.
 
     Wraps a ``ChamferMetric(with_normals=True)``. Always runs under
     ``no_grad`` — the reward only ever feeds a detached advantage, so it never
