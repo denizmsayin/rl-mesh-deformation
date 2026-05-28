@@ -371,6 +371,104 @@ class Blob(BaseShape):
 
 
 
+class Grid(BaseShape):
+    """
+    A rows x cols grid of identical cell shapes, deformed/transformed as one unit.
+
+    Points are the concatenation of each cell's boundary points (cells visited
+    row-major). Cells are spaced `spacing` apart center-to-center; for unit-radius
+    cells (circle, hexagon) spacing=2.0 makes neighbors touch.
+
+    Edges are emitted in two blocks:
+      1. boundary cycles — exactly one edge per vertex (so #boundary_edges ==
+         #vertices), which keeps the project's `num_verts`-as-edge-count
+         invariant intact for length-weighted point sampling.
+      2. bridge edges — one per adjacent cell pair (right + down neighbours),
+         joining the closest vertex of each cell so the grid is a single
+         connected graph. These come last and are near-zero length, so the
+         sampling mask (which keeps only the first #vertices edges) ignores them
+         while a graph network can still see the connectivity.
+    """
+
+    def __init__(self, num_points=240, cell_shape="circle", rows=2, cols=2,
+                 spacing=2.0, bridges=True):
+        if rows < 1 or cols < 1:
+            raise ValueError("rows and cols must be >= 1")
+        self.cell_shape = cell_shape
+        self.rows = int(rows)
+        self.cols = int(cols)
+        self.spacing = float(spacing)
+        self.bridges = bool(bridges)
+        super().__init__(num_points=num_points)
+
+    _CELL_CLASSES = None
+
+    @classmethod
+    def _cell_classes(cls):
+        if cls._CELL_CLASSES is None:
+            cls._CELL_CLASSES = {
+                "circle": Circle,
+                "hexagon": Hexagon,
+                "triangle": Triangle,
+                "star": Star,
+                "polygon": RegularPolygon,
+            }
+        return cls._CELL_CLASSES
+
+    def compute_points(self, num_points=240):
+        cell_classes = self._cell_classes()
+        if self.cell_shape not in cell_classes:
+            raise ValueError(
+                f"Unsupported cell_shape {self.cell_shape!r}; "
+                f"choose from {sorted(cell_classes)}"
+            )
+
+        n_cells = self.rows * self.cols
+        per_cell = max(1, num_points // n_cells)
+        cell_pts = cell_classes[self.cell_shape](num_points=per_cell).get_points()
+        self._per_cell = cell_pts.shape[0]
+
+        cx = (self.cols - 1) / 2.0 * self.spacing
+        cy = (self.rows - 1) / 2.0 * self.spacing
+
+        parts = []
+        for i in range(self.rows):
+            for j in range(self.cols):
+                center = np.array([j * self.spacing - cx, cy - i * self.spacing])
+                parts.append(cell_pts + center)
+
+        return np.concatenate(parts, axis=0)
+
+    def _closest_pair(self, c_a, c_b):
+        per = self._per_cell
+        a = self.points[c_a * per:(c_a + 1) * per]
+        b = self.points[c_b * per:(c_b + 1) * per]
+        d = np.linalg.norm(a[:, None, :] - b[None, :, :], axis=-1)
+        ia, ib = np.unravel_index(np.argmin(d), d.shape)
+        return [c_a * per + int(ia), c_b * per + int(ib)]
+
+    def compute_edges(self):
+        per = self._per_cell
+        n_cells = self.rows * self.cols
+
+        edges = []
+        for c in range(n_cells):
+            off = c * per
+            for k in range(per):
+                edges.append([off + k, off + (k + 1) % per])
+
+        if self.bridges:
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    c = i * self.cols + j
+                    if j + 1 < self.cols:
+                        edges.append(self._closest_pair(c, i * self.cols + (j + 1)))
+                    if i + 1 < self.rows:
+                        edges.append(self._closest_pair(c, (i + 1) * self.cols + j))
+
+        return np.asarray(edges, dtype=int)
+
+
 class TransformedShapeBatch:
     """
     Represents many transformed versions of one base shape.
@@ -596,6 +694,7 @@ class ShapeGenerator:
             "heart": Heart,
             "moon": Moon,
             "blob": Blob,
+            "grid": Grid,
         }
 
         # NumPy BaseShape cache
