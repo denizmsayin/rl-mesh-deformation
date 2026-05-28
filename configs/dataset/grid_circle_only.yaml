@@ -1,0 +1,8 @@
+shapes:
+  grid_circle:
+    shape: grid
+    num_points: 480
+    cell_shape: circle
+    rows: 2
+    cols: 2
+    percentage: 1.0

@@ -1,0 +1,11 @@
+name: grid_circle_centered_stream
+source:
+  _target_: rlmd.data.online.OnlineShapeSampler
+  shape_specs:
+    - {shape: grid, num_points: 480, cell_shape: circle, rows: 2, cols: 2}
+  transform:
+    translation_range: [-1.0, 1.0]
+    scale_range: [0.5, 2.0]
+    rotation_range: [0.0, 360.0]
+    isotropic_scale: true
+  seed: 0
