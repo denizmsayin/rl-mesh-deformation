@@ -1,0 +1,13 @@
+_target_: rlmd.evaluation.matchers.LearnedMatcher
+feature_extractor:
+  _target_: rlmd.models.PolygonGNN
+  in_channels: 2
+  hidden_channels: [64, 64, 128]
+  out_channels: 128
+  aggr: max
+  layernorm: true
+temperature: 1.0
+# Path to a checkpoint produced by scripts/train_matcher.py. Override at the
+# CLI: matcher.checkpoint_path=outputs/.../matcher.pt
+checkpoint_path: null
+override_temperature: false
