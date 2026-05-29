@@ -1,4 +1,4 @@
 # @package _global_
 defaults:
-  - /dataset_src: grid_circle_centered_stream
-  - /dataset_src@eval.dataset_src: grid_circle_centered_set
+  - /dataset_src: grid_circle_translated_stream
+  - /dataset_src@eval.dataset_src: grid_circle_translated_set

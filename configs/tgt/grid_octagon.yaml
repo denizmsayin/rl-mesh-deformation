@@ -1,4 +1,4 @@
 # @package _global_
 defaults:
-  - /dataset_tgt: grid_octagon_centered_stream
-  - /dataset_tgt@eval.dataset_tgt: grid_octagon_centered_set
+  - /dataset_tgt: grid_octagon_translated_stream
+  - /dataset_tgt@eval.dataset_tgt: grid_octagon_translated_set

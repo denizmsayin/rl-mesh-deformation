@@ -1,4 +1,4 @@
-name: grid_octagon_centered_stream
+name: grid_octagon_translated_stream
 source:
   _target_: rlmd.data.online.OnlineShapeSampler
   shape_specs:

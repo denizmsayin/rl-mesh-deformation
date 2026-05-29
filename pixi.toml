@@ -38,6 +38,7 @@ imageio-ffmpeg = "*"
 [pypi-dependencies]
 
 rlmd = { path = ".", editable = true }
+torch-geometric = "*"
 
 einops = "*"
 vtk = "*"
@@ -69,11 +70,14 @@ gxx = "13.*"
 
 [feature.cuda.pypi-options]
 extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
+find-links = [{ url = "https://data.pyg.org/whl/torch-2.10.0+cu128.html" }]
 index-strategy = "unsafe-best-match"
 
 [feature.cuda.pypi-dependencies]
 torch = "==2.10.0"
 torchvision = "*"
+torch-scatter = "*"
+torch-sparse = "*"
 
 [feature.cuda.activation]
 env = { LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH" }

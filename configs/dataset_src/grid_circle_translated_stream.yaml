@@ -1,4 +1,4 @@
-name: grid_circle_centered_stream
+name: grid_circle_translated_stream
 source:
   _target_: rlmd.data.online.OnlineShapeSampler
   shape_specs:
