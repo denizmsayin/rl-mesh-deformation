@@ -61,11 +61,23 @@ class PolygonGNN(nn.Module):
     """
 
     def __init__(self, in_channels=2, hidden_channels=(64, 64, 128),
-                 out_channels=128, aggr="max", layernorm=True):
+                 out_channels=128, aggr="max", layernorm=True, residual=True):
         super().__init__()
         dims = [in_channels, *hidden_channels, out_channels]
+        # DGCNN-style EdgeConv with a 2-layer message MLP per edge:
+        # MLP(h_i ‖ h_j − h_i) = Linear -> ReLU -> Linear. A single Linear (the
+        # earlier version) is too weak to build discriminative per-vertex
+        # embeddings on near-homogeneous shapes (e.g. a uniformly resampled
+        # circle), leaving the matcher's softmax near-uniform.
         self.convs = nn.ModuleList([
-            EdgeConv(nn.Linear(2 * dims[i], dims[i + 1]), aggr=aggr)
+            EdgeConv(
+                nn.Sequential(
+                    nn.Linear(2 * dims[i], dims[i + 1]),
+                    nn.ReLU(),
+                    nn.Linear(dims[i + 1], dims[i + 1]),
+                ),
+                aggr=aggr,
+            )
             for i in range(len(dims) - 1)
         ])
         if layernorm:
@@ -74,6 +86,7 @@ class PolygonGNN(nn.Module):
             ])
         else:
             self.norms = None
+        self.residual = residual
 
     def forward(self, V, L, num_verts, num_edges=None):
         if num_edges is None:
@@ -83,11 +96,13 @@ class PolygonGNN(nn.Module):
 
         last = len(self.convs) - 1
         for i, conv in enumerate(self.convs):
-            x = conv(x, edge_index)
+            h = conv(x, edge_index)
             if i < last:
                 if self.norms is not None:
-                    x = self.norms[i](x)
-                x = F.relu(x)
+                    h = self.norms[i](h)
+                h = F.relu(h)
+            # Residual when widths match (eases optimization / depth).
+            x = x + h if (self.residual and h.shape[-1] == x.shape[-1]) else h
 
         B, N_max, _ = V.shape
         out = V.new_zeros(B, N_max, x.shape[-1])
