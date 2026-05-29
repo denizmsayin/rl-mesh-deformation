@@ -50,7 +50,8 @@ def test_fixed_match_runs_and_reduces_data_term():
 
     # Initial data term using the same matcher.
     with torch.no_grad():
-        m0 = matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
+        m0 = matcher((V_src_r, L_src_r, nv_src_r, ne_src_r),
+                     (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r))
         init_loss = _mean_pair_distance(V_src_r, V_tgt_r, m0).item()
 
     scenario = SgdFixedMatchScenario(
@@ -73,7 +74,8 @@ def test_fixed_match_runs_and_reduces_data_term():
 
     with torch.no_grad():
         # Same frozen matches as scenario uses; recompute to evaluate.
-        m = matcher(V_src_r, nv_src_r, V_tgt_r, nv_tgt_r)
+        m = matcher((V_src_r, L_src_r, nv_src_r, ne_src_r),
+                    (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r))
         final_loss = _mean_pair_distance(V_final, V_tgt_r, m).item()
 
     assert final_loss < 0.25 * init_loss, (init_loss, final_loss)

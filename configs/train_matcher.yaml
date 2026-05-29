@@ -20,6 +20,11 @@ batch_size: 8192
 # Uniform-resample target count for the policy / inner SGD.
 M: 16
 
+# torch.compile the feature-extractor model. Set false for models with
+# data-dependent shapes (e.g. PolygonGNN) whose forward can't be compiled by
+# Inductor; scoped to the model only.
+compile_model: true
+
 # REINFORCE
 entropy_coef: 0.01
 

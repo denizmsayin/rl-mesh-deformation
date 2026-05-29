@@ -102,7 +102,7 @@ class SgdRematchScenario:
             V_cur = (V_src + deform).detach().clone()
             boundary.append(V_cur)
 
-            res = matcher(V_cur, nv_src, V_tgt, nv_tgt)
+            res = matcher((V_cur, L_src, nv_src, ne_src), poly_tgt)
             if isinstance(res, tuple):                  # stochastic policy
                 matchings, log_p, ent = res
                 log_probs.append(log_p)

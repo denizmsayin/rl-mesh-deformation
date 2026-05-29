@@ -55,10 +55,10 @@ class SgdFixedMatchScenario:
         record_max_batch: Optional[int] = None,
     ):
         V_src, L_src, nv_src, ne_src = poly_src
-        V_tgt, _, nv_tgt, _ = poly_tgt
+        V_tgt = poly_tgt[0]
 
         with torch.no_grad():
-            matchings = matcher(V_src, nv_src, V_tgt, nv_tgt)
+            matchings = matcher(poly_src, poly_tgt)
 
         deform = torch.zeros_like(V_src, requires_grad=True)
         optimizer = torch.optim.SGD([deform], lr=self.lr, momentum=self.momentum)

@@ -36,6 +36,16 @@ def _model(out=16):
                       kernel_size=5, layernorm=True)
 
 
+def _canon_poly(V, n):
+    """Wrap (V, num_verts) into a (V, L, num_verts, num_edges) tuple with a
+    canonical cyclic L, for the polyline-tuple Matcher API."""
+    B, M, _ = V.shape
+    i = torch.arange(M)
+    L = torch.stack([i, (i + 1) % M], dim=-1)[None].expand(B, -1, -1).contiguous()
+    ne = torch.full((B,), M, dtype=torch.long)
+    return (V, L, n, ne)
+
+
 def test_stochastic_matcher_shapes_and_log_prob_identity():
     M = 32
     V_src_np = _circle(20)
@@ -46,7 +56,7 @@ def test_stochastic_matcher_shapes_and_log_prob_identity():
     matcher = StochasticLearnedMatcher(model, temperature=1.0)
 
     torch.manual_seed(123)
-    matchings, log_prob, entropy = matcher(Vs, ns, Vt, nt)
+    matchings, log_prob, entropy = matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
 
     assert len(matchings) == 1
     m = matchings[0]
@@ -58,7 +68,7 @@ def test_stochastic_matcher_shapes_and_log_prob_identity():
 
     # log_prob = sum over rows of log_softmax(S)[i, sampled_j].
     with torch.no_grad():
-        S = _compute_scores(model, Vs, ns, Vt, nt, 1.0)
+        S = _compute_scores(model, _canon_poly(Vs, ns), _canon_poly(Vt, nt), 1.0)
         lp_rows = F.log_softmax(S, dim=-1).gather(-1, m.idx_tgt.unsqueeze(-1)).squeeze(-1)
         expected = (lp_rows * m.mask.to(lp_rows.dtype)).sum(dim=-1)
     torch.testing.assert_close(log_prob.detach(), expected, atol=1e-5, rtol=1e-4)
@@ -72,7 +82,7 @@ def test_stochastic_matcher_grad_flows_to_features():
     matcher = StochasticLearnedMatcher(model, temperature=1.0)
 
     torch.manual_seed(0)
-    _, log_prob, _ = matcher(Vs, ns, Vt, nt)
+    _, log_prob, _ = matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
     log_prob.sum().backward()
 
     grads = [p.grad for p in model.parameters() if p.requires_grad]
@@ -88,8 +98,8 @@ def test_argmax_matcher_matches_stochastic_at_low_temperature():
 
     model = _model()
     argmax_matcher = LearnedMatcher(model, temperature=1.0)
-    out1 = argmax_matcher(Vs, ns, Vt, nt)
-    out2 = argmax_matcher(Vs, ns, Vt, nt)
+    out1 = argmax_matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
+    out2 = argmax_matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
     assert torch.equal(out1[0].idx_tgt, out2[0].idx_tgt)
     assert (out1[0].idx_tgt >= 0).all() and (out1[0].idx_tgt < M).all()
 
@@ -99,7 +109,7 @@ def test_argmax_matcher_returns_no_grad():
     Vs, ns, Vt, nt = _resample_pair(_circle(12), _circle(14), M)
     model = _model()
     matcher = LearnedMatcher(model)
-    out = matcher(Vs, ns, Vt, nt)
+    out = matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
     # Matching indices are long; no .grad_fn possible.
     assert not out[0].idx_tgt.requires_grad
 
@@ -126,7 +136,8 @@ def test_padding_does_not_leak_into_log_prob_or_entropy():
     matcher = StochasticLearnedMatcher(model, temperature=1.0)
 
     torch.manual_seed(7)
-    matchings, log_prob, entropy = matcher(Vs_batch, ns_batch, Vt_batch, nt_batch)
+    matchings, log_prob, entropy = matcher(
+        _canon_poly(Vs_batch, ns_batch), _canon_poly(Vt_batch, nt_batch))
 
     # mask reflects valid source positions
     assert matchings[0].mask[0].sum().item() == M
@@ -146,7 +157,7 @@ def test_target_padding_zeroes_softmax_probability():
     model = _model()
     matcher = StochasticLearnedMatcher(model, temperature=1.0)
     torch.manual_seed(0)
-    matchings, _, _ = matcher(Vs, ns, Vt, nt)
+    matchings, _, _ = matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
     assert (matchings[0].idx_tgt < 5).all()
 
 
@@ -159,7 +170,7 @@ def test_fixed_matcher_returns_stored():
     m = Matching(idx_src=idx_src, idx_tgt=idx_tgt, mask=mask)
 
     fixed = FixedMatcher([m])
-    out = fixed(None, None, None, None)  # args ignored
+    out = fixed(None, None)  # args ignored
     assert out[0] is m
 
 
@@ -193,8 +204,8 @@ def test_learned_matcher_loads_checkpoint(tmp_path):
     M = 24
     Vs, ns, Vt, nt = _resample_pair(_circle(10), _circle(14), M)
     peer = LearnedMatcher(src_model, temperature=0.7)
-    out_loaded = matcher(Vs, ns, Vt, nt)
-    out_peer = peer(Vs, ns, Vt, nt)
+    out_loaded = matcher(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
+    out_peer = peer(_canon_poly(Vs, ns), _canon_poly(Vt, nt))
     assert torch.equal(out_loaded[0].idx_tgt, out_peer[0].idx_tgt)
 
 

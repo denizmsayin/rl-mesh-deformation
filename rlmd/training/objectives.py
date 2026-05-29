@@ -72,10 +72,9 @@ class BanditObjective:
         self.entropy_coef = float(entropy_coef)
 
     def compute(self, matcher, poly_src: Polyline, poly_tgt: Polyline) -> Update:
-        V_src, L_src, nv_src, ne_src = poly_src
-        V_tgt, _, nv_tgt, _ = poly_tgt
+        _, L_src, nv_src, ne_src = poly_src
 
-        matchings, log_prob, entropy = matcher(V_src, nv_src, V_tgt, nv_tgt)
+        matchings, log_prob, entropy = matcher(poly_src, poly_tgt)
 
         V_final = self.scenario.run(poly_src, poly_tgt, FixedMatcher(matchings))
         rout = self.reward((V_final, L_src, nv_src, ne_src), poly_tgt)

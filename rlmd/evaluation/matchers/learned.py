@@ -6,27 +6,20 @@ import torch.nn.functional as F
 from rlmd.ops import Matching
 
 
-def _canonical_L(M: int, B: int, device) -> torch.Tensor:
-    """Build canonical cyclic edges (i, (i+1) mod M) for a closed M-gon, batched."""
-    i = torch.arange(M, device=device)
-    L = torch.stack([i, (i + 1) % M], dim=-1)
-    return L[None].expand(B, -1, -1).contiguous()
-
-
-def _compute_scores(feature_extractor, V_src, n_src, V_tgt, n_tgt, temperature):
+def _compute_scores(feature_extractor, poly_src, poly_tgt, temperature):
     """
     Returns (B, M_src, M_tgt) similarity logits with padded *target* positions
     masked to -inf so they get zero softmax probability.
 
-    Assumes the input polylines are canonical cyclic sequences (true after
-    `rlmd.ops.resample_uniform_polyline`); the canonical L is rebuilt here from
-    num_verts so callers don't need to pass it.
+    Consumes the real polyline graphs: the feature extractor is given each
+    side's actual (V, L, num_verts), so topology beyond a single cycle (e.g.
+    welded grids) is preserved. The extractor is called with 3 positional args,
+    which both PolygonCNN (ignores L past an optional check) and PolygonGNN
+    (derives num_edges from L) accept.
     """
-    B, M_src, _ = V_src.shape
+    V_src, L_src, n_src, _ = poly_src
+    V_tgt, L_tgt, n_tgt, _ = poly_tgt
     M_tgt = V_tgt.shape[1]
-
-    L_src = _canonical_L(M_src, B, V_src.device)
-    L_tgt = _canonical_L(M_tgt, B, V_tgt.device)
 
     f_src = feature_extractor(V_src, L_src, n_src)            # (B, M_src, D)
     f_tgt = feature_extractor(V_tgt, L_tgt, n_tgt)            # (B, M_tgt, D)
@@ -61,8 +54,9 @@ class StochasticLearnedMatcher:
         self.feature_extractor = feature_extractor
         self.temperature = float(temperature)
 
-    def __call__(self, V_src, n_src, V_tgt, n_tgt):
-        S = _compute_scores(self.feature_extractor, V_src, n_src, V_tgt, n_tgt,
+    def __call__(self, poly_src, poly_tgt):
+        V_src, n_src = poly_src[0], poly_src[2]
+        S = _compute_scores(self.feature_extractor, poly_src, poly_tgt,
                             self.temperature)
         B, M_src, _ = S.shape
 
@@ -115,10 +109,11 @@ class LearnedMatcher:
                 self.temperature = float(ck["temperature"])
         self.feature_extractor.eval()
 
-    def __call__(self, V_src, n_src, V_tgt, n_tgt) -> List[Matching]:
+    def __call__(self, poly_src, poly_tgt) -> List[Matching]:
+        V_src, n_src = poly_src[0], poly_src[2]
         self.feature_extractor.to(V_src.device)
         with torch.no_grad():
-            S = _compute_scores(self.feature_extractor, V_src, n_src, V_tgt, n_tgt,
+            S = _compute_scores(self.feature_extractor, poly_src, poly_tgt,
                                 self.temperature)
         sample = S.argmax(dim=-1)                                    # (B, M_src)
         B, M_src = sample.shape

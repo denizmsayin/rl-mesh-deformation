@@ -69,7 +69,8 @@ class SgdScenario:
                 _snapshot(V)
             P = sample_points_from_polylines(V, L_src, ne_src, self.num_samples)
             P_tgt = sample_points_from_polylines(V_tgt, L_tgt, ne_tgt, self.num_samples)
-            matchings = matcher(P, n_samples_src, P_tgt, n_samples_tgt)
+            matchings = matcher((P, None, n_samples_src, None),
+                                (P_tgt, None, n_samples_tgt, None))
             l_chamfer = distance_loss(P, P_tgt, matchings, p=self.distance_p)
             l_edge = polyline_edge_loss(V, L_src, ne_src)
             l_normal = polyline_normal_consistency(V, L_src, nv_src, ne_src)

@@ -38,8 +38,8 @@ class _StochasticRolloutMatcher:
     def __init__(self, base: StochasticLearnedMatcher):
         self._base = base
 
-    def __call__(self, V_src, n_src, V_tgt, n_tgt):
-        matchings, _lp, _ent = self._base(V_src, n_src, V_tgt, n_tgt)
+    def __call__(self, poly_src, poly_tgt):
+        matchings, _lp, _ent = self._base(poly_src, poly_tgt)
         return matchings
 from rlmd.evaluation.metrics import ChamferMetric
 from rlmd.ops import resample_uniform_graph
@@ -388,7 +388,12 @@ def train(cfg: DictConfig) -> str:
     baseline_scenario = baseline.scenario if baseline_type == "chamfer_sgd" else None
     baseline_matcher = baseline.matcher if baseline_type == "chamfer_sgd" else None
 
-    matcher.feature_extractor = torch.compile(feature_extractor)
+    # Optionally torch.compile the feature extractor. Off-by-config for models
+    # whose forward has data-dependent shapes (e.g. PolygonGNN's boolean-mask
+    # dense<->graph conversion lowers to aten.nonzero, which Inductor can't
+    # compile and falls back on noisily). Scoped to the model only.
+    if bool(cfg.get("compile_model", True)):
+        matcher.feature_extractor = torch.compile(feature_extractor)
 
     optimizer = instantiate(cfg.optimizer, params=feature_extractor.parameters())
 
