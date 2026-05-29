@@ -15,7 +15,7 @@ seed: 0
 # not experience.
 total_trajectories: 1_000_000
 checkpoint_every_steps: 500   # null disables periodic checkpoints; end-of-run save always happens
-batch_size: 8192
+batch_size: 4096
 
 # Uniform-resample target count for the policy / inner SGD.
 M: 16

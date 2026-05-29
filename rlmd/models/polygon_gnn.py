@@ -12,8 +12,11 @@ def _padded_to_pyg(V, L, num_verts, num_edges):
     offset[b] + i, where offset is the exclusive cumsum of num_verts; this is
     only valid because padding is at the tail (arange < num_verts).
 
-    Edges are made undirected (both directions added) and self-loops are
-    appended so every node sees its own feature under max aggregation.
+    Edges are made undirected (both directions added). No self-loops are added:
+    EdgeConv's message already includes x_i (via concat(x_i, x_j - x_i)) and the
+    model carries self-information through residual connections, so self-loops
+    are redundant and only inflate the per-edge memory (the dominant cost at
+    large batch).
 
     Returns:
         x: (sumN, 2) float node features (coords).
@@ -34,9 +37,8 @@ def _padded_to_pyg(V, L, num_verts, num_edges):
     a = (L[..., 0] + offset[:, None])[edge_mask]               # (E0,) global src
     b = (L[..., 1] + offset[:, None])[edge_mask]               # (E0,) global dst
 
-    self_idx = torch.arange(x.shape[0], device=device)
-    src = torch.cat([a, b, self_idx])
-    dst = torch.cat([b, a, self_idx])
+    src = torch.cat([a, b])
+    dst = torch.cat([b, a])
     edge_index = torch.stack([src, dst], dim=0)               # (2, E)
     return x, edge_index, node_mask
 
