@@ -42,7 +42,7 @@ class _StochasticRolloutMatcher:
         matchings, _lp, _ent = self._base(V_src, n_src, V_tgt, n_tgt)
         return matchings
 from rlmd.evaluation.metrics import ChamferMetric
-from rlmd.ops import resample_uniform_polyline
+from rlmd.ops import resample_uniform_graph
 from rlmd.training import CompositeChamferReward, METRIC_COLUMNS, build_baseline
 
 
@@ -89,8 +89,10 @@ def _rollout_reward(matcher, scenario, chamfer, batches_src, batches_tgt, M, dev
     for batch_src, batch_tgt in zip(batches_src, batches_tgt):
         V_src, L_src, nv_src, ne_src, _ = _to_device(batch_src, device)
         V_tgt, L_tgt, nv_tgt, ne_tgt, _ = _to_device(batch_tgt, device)
-        V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_polyline(V_src, L_src, nv_src, M)
-        V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_polyline(V_tgt, L_tgt, nv_tgt, M)
+        V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_graph(
+            V_src, L_src, nv_src, ne_src, M)
+        V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_graph(
+            V_tgt, L_tgt, nv_tgt, ne_tgt, M)
         V_final = scenario.run(
             (V_src_r, L_src_r, nv_src_r, ne_src_r),
             (V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r),
@@ -525,10 +527,10 @@ def train(cfg: DictConfig) -> str:
             B = V_src.shape[0]
             traj += B
 
-            V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_polyline(
-                V_src, L_src, nv_src, int(cfg.M))
-            V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_polyline(
-                V_tgt, L_tgt, nv_tgt, int(cfg.M))
+            V_src_r, L_src_r, nv_src_r, ne_src_r = resample_uniform_graph(
+                V_src, L_src, nv_src, ne_src, int(cfg.M))
+            V_tgt_r, L_tgt_r, nv_tgt_r, ne_tgt_r = resample_uniform_graph(
+                V_tgt, L_tgt, nv_tgt, ne_tgt, int(cfg.M))
 
             update = objective.compute(
                 matcher,
