@@ -323,8 +323,12 @@ def render_deformation_video(
             src_scatters.append((None, n_s))
             quivers.append((None, None, None, n_s))
 
+        # Size the window to the target plus the initial and final source
+        # frames only. Unstable intermediate iterations can fling vertices far
+        # away; including every frame would inflate the limits and shrink the
+        # meaningful content to a dot. Such blow-ups now simply leave the frame.
         all_pts = np.concatenate(
-            [frames_np[:, i, :n_s].reshape(-1, 2), v_t], axis=0)
+            [frames_np[0, i, :n_s], frames_np[-1, i, :n_s], v_t], axis=0)
         span = float(all_pts.max() - all_pts.min())
         pad = 0.1 * span if span > 0 else 0.05
         ax.set_xlim(float(all_pts[:, 0].min()) - pad,
