@@ -254,6 +254,103 @@ def save_src_tgt_pair_cells(
     return written
 
 
+def _fixed_overlay_limits(v_s_init, v_s_final, v_t, *, pad_frac=0.08):
+    """Axis limits from initial/final source and target (ignores blow-up frames)."""
+    all_pts = np.concatenate([v_s_init, v_s_final, v_t], axis=0)
+    span = float(all_pts.max() - all_pts.min())
+    pad = pad_frac * span if span > 0 else 0.05
+    return (
+        float(all_pts[:, 0].min()) - pad,
+        float(all_pts[:, 0].max()) + pad,
+        float(all_pts[:, 1].min()) - pad,
+        float(all_pts[:, 1].max()) + pad,
+    )
+
+
+def save_deformation_stage_pdfs(
+    frames,
+    L_src,
+    nv_src,
+    ne_src,
+    V_tgt,
+    L_tgt,
+    nv_tgt,
+    ne_tgt,
+    out_dir,
+    *,
+    frame_indices,
+    sample_idx=0,
+    record_every=5,
+    num_iters=300,
+    panel_size_in=1.25,
+    fmt="pdf",
+    src_color=PUBLISH_SRC_COLOR,
+    tgt_color=PUBLISH_TGT_COLOR,
+    linewidth=1.25,
+):
+    """Export selected deformation snapshots as publication-style vector panels.
+
+    ``frames`` is ``(T, N, 2)`` source vertex positions over time (one sample).
+    Each file overlays the deforming source polyline on the static target,
+    matching :func:`save_src_tgt_pair_cells` styling with a shared viewport.
+    """
+    import os
+
+    if frames.dim() != 3 or frames.shape[-1] != 2:
+        raise ValueError("save_deformation_stage_pdfs expects frames with shape (T, N, 2).")
+
+    T = frames.shape[0]
+    indices = [int(t) for t in frame_indices]
+    for t in indices:
+        if not (0 <= t < T):
+            raise ValueError(f"frame index {t} out of range for T={T}")
+
+    os.makedirs(out_dir, exist_ok=True)
+    n_s = int(nv_src[0].item())
+    n_t = int(nv_tgt[0].item())
+    m_s = int(ne_src[0].item())
+    m_t = int(ne_tgt[0].item())
+    e_s = L_src[0, :m_s].cpu().numpy()
+    e_t = L_tgt[0, :m_t].cpu().numpy()
+    v_t = V_tgt[0, :n_t].detach().cpu().numpy()
+    v_init = frames[0, :n_s].detach().cpu().numpy()
+    v_final = frames[-1, :n_s].detach().cpu().numpy()
+    xlim = _fixed_overlay_limits(v_init, v_final, v_t)
+
+    save_kw = dict(facecolor="white", edgecolor="none")
+    if fmt.lower() != "pdf":
+        save_kw["dpi"] = 600
+
+    written = []
+    for stage, t in enumerate(indices):
+        v_s = frames[t, :n_s].detach().cpu().numpy()
+        iter_label = num_iters if t == T - 1 else t * int(record_every)
+
+        fig, ax = plt.subplots(1, 1, figsize=(panel_size_in, panel_size_in))
+        _draw_poly_pair_on_ax(
+            ax,
+            v_s,
+            v_t,
+            e_s,
+            e_t,
+            src_color=src_color,
+            tgt_color=tgt_color,
+            linewidth=linewidth,
+        )
+        ax.set_xlim(xlim[0], xlim[1])
+        ax.set_ylim(xlim[2], xlim[3])
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+        path = os.path.join(
+            out_dir,
+            f"sample_{sample_idx:03d}_stage_{stage:02d}_iter_{iter_label:04d}.{fmt}",
+        )
+        fig.savefig(path, bbox_inches=None, pad_inches=0, **save_kw)
+        plt.close(fig)
+        written.append(path)
+
+    return written
+
+
 def plot_polylines_initial_vs_final(
     V_init,
     V_final,

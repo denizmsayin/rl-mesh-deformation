@@ -1,0 +1,36 @@
+defaults:
+  - dataset_src: circle_translated_set
+  - dataset_tgt: shapes_set
+  - matcher: knn_3d
+  - scenario: sgd_default
+  - _self_
+
+# Global index in the harness eval subset (same pairing as evaluate_harness).
+sample_idx: 5
+
+eval_num_samples: 32
+seed_src: 0
+seed_tgt: 1
+device: auto
+
+# Re-run SGD with the same snapshot cadence as record_deformation.every.
+record_every: 5
+
+# Uniform resampling before optimization (null to disable).
+resample_M: null
+
+# Number of evenly spaced snapshots to export (ignored when frame_indices is set).
+num_frames: 5
+frame_indices: null
+
+panel_size_in: 1.25
+linewidth: 1.25
+fmt: pdf
+
+output_dir: deformation_stages
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/export_deformation_stages/${now:%Y-%m-%d}/${now:%H-%M-%S}
