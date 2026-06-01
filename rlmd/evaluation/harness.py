@@ -206,35 +206,41 @@ def run(cfg: DictConfig) -> str:
 
             record_this_batch = record_enabled and batch_i == 0
             if record_this_batch:
-                K_rec = int(record_cfg.first_k)
+                k0 = int(record_cfg.get("start_k", 0))
+                k1 = k0 + int(record_cfg.get("num_k", int(record_cfg.get("first_k", 8))))
+                k1 = min(k1, int(V_src.shape[0]))
+                k0 = min(k0, k1)
                 V_final, frames, matchings = scenario.run(
                     (V_src, L_src, nv_src, ne_src),
                     (V_tgt, L_tgt, nv_tgt, ne_tgt),
                     matcher,
                     record_every=int(record_cfg.every),
-                    record_max_batch=K_rec,
+                    record_max_batch=k1,
                 )
-                K_rec = min(K_rec, int(V_src.shape[0]))
                 # Pass the source->target matching (first entry) into the
                 # video renderer so it can overlay matching arrows. None for
                 # scenarios that don't have a single fixed matching.
                 match_idx_vis = None
-                if matchings is not None and len(matchings) > 0:
-                    match_idx_vis = matchings[0].idx_tgt[:K_rec].detach().cpu()
+                if (
+                    bool(record_cfg.get("show_matching", True))
+                    and matchings is not None
+                    and len(matchings) > 0
+                ):
+                    match_idx_vis = matchings[0].idx_tgt[k0:k1].detach().cpu()
                 video_path = os.path.join(output_dir, str(record_cfg.filename))
                 render_deformation_video(
-                    frames,
-                    L_src[:K_rec],
-                    nv_src[:K_rec],
-                    ne_src[:K_rec],
-                    V_tgt[:K_rec],
-                    L_tgt[:K_rec],
-                    nv_tgt[:K_rec],
-                    ne_tgt[:K_rec],
+                    frames[:, k0:k1],
+                    L_src[k0:k1],
+                    nv_src[k0:k1],
+                    ne_src[k0:k1],
+                    V_tgt[k0:k1],
+                    L_tgt[k0:k1],
+                    nv_tgt[k0:k1],
+                    ne_tgt[k0:k1],
                     video_path,
                     match_idx=match_idx_vis,
                     duration_s=float(record_cfg.duration_s),
-                    first_index=sample_idx,
+                    first_index=sample_idx + k0,
                 )
                 print(f"wrote deformation video {video_path}")
             else:

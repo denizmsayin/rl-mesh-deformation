@@ -1,0 +1,21 @@
+defaults:
+  - dataset_src: circle_translated_set
+  - dataset_tgt: shapes_set
+  - _self_
+
+# Export this many individual pair files (pick subsets in LaTeX).
+num_pairs: 6
+seed: 0
+eval_num_samples: 64
+
+batch_size: 16
+num_workers: 0
+pin_memory: false
+
+# Square panel side length in inches (identical for every file).
+panel_size_in: 1.25
+linewidth: 1.75
+fmt: pdf
+
+# Subdirectory under the Hydra run dir (one pair_XXX.pdf per sample).
+output_dir: pairs

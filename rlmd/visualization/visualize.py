@@ -16,9 +16,19 @@ def evenly_spaced_indices(n, desired_count):
     count = max(1, min(int(round(desired_count)), n))
     return np.unique(np.round(np.linspace(0, n - 1, count)).astype(int))
 
-def draw_edges(ax, vertices, edges, color):
+def draw_edges(ax, vertices, edges, color, *, linewidth=1.0, alpha=0.55, zorder=1):
     seg = np.stack((vertices[edges[:, 0]], vertices[edges[:, 1]]), axis=1)
-    ax.add_collection(LineCollection(seg, colors=color, linewidths=1.0, alpha=0.55, zorder=1))
+    ax.add_collection(
+        LineCollection(
+            seg,
+            colors=color,
+            linewidths=linewidth,
+            alpha=alpha,
+            zorder=zorder,
+            capstyle="round",
+            joinstyle="round",
+        )
+    )
 
 
 def draw_matching_lines(ax, v_s, v_t, match_idx, line_colors, line_width, line_alpha, line_indices):
@@ -132,6 +142,37 @@ def visualize_matching(
 _SRC_COLOR = "#1f77b4"
 _TGT_COLOR = "#ff7f0e"
 
+# Okabe–Ito palette (colorblind-safe); used for publication exports.
+PUBLISH_SRC_COLOR = "#0072B2"
+PUBLISH_TGT_COLOR = "#D55E00"
+
+
+def _draw_poly_pair_on_ax(
+    ax,
+    v_s,
+    v_t,
+    e_s,
+    e_t,
+    *,
+    src_color=_SRC_COLOR,
+    tgt_color=_TGT_COLOR,
+    linewidth=1.75,
+    src_alpha=1.0,
+    tgt_alpha=0.92,
+):
+    draw_edges(ax, v_t, e_t, tgt_color, linewidth=linewidth, alpha=tgt_alpha, zorder=1)
+    draw_edges(ax, v_s, e_s, src_color, linewidth=linewidth, alpha=src_alpha, zorder=2)
+    all_pts = np.vstack([v_s, v_t])
+    span = float(all_pts.max() - all_pts.min())
+    pad = 0.08 * span if span > 0 else 0.05
+    ax.set_xlim(float(all_pts[:, 0].min()) - pad, float(all_pts[:, 0].max()) + pad)
+    ax.set_ylim(float(all_pts[:, 1].min()) - pad, float(all_pts[:, 1].max()) + pad)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
 
 def _draw_poly_pair(ax, V_s, L_s, nv_s, ne_s, V_t, L_t, nv_t, ne_t, i):
     n_s, n_t = int(nv_s[i].item()), int(nv_t[i].item())
@@ -140,16 +181,77 @@ def _draw_poly_pair(ax, V_s, L_s, nv_s, ne_s, V_t, L_t, nv_t, ne_t, i):
     v_t = V_t[i, :n_t].detach().cpu().numpy()
     e_s = L_s[i, :m_s].cpu().numpy()
     e_t = L_t[i, :m_t].cpu().numpy()
-    draw_edges(ax, v_s, e_s, _SRC_COLOR)
-    draw_edges(ax, v_t, e_t, _TGT_COLOR)
-    all_pts = np.vstack([v_s, v_t])
-    span = float(all_pts.max() - all_pts.min())
-    pad = 0.1 * span if span > 0 else 0.05
-    ax.set_xlim(float(all_pts[:, 0].min()) - pad, float(all_pts[:, 0].max()) + pad)
-    ax.set_ylim(float(all_pts[:, 1].min()) - pad, float(all_pts[:, 1].max()) + pad)
-    ax.set_aspect("equal")
-    ax.set_xticks([])
-    ax.set_yticks([])
+    _draw_poly_pair_on_ax(ax, v_s, v_t, e_s, e_t)
+
+
+def save_src_tgt_pair_cells(
+    V_src,
+    L_src,
+    nv_src,
+    ne_src,
+    V_tgt,
+    L_tgt,
+    nv_tgt,
+    ne_tgt,
+    out_dir,
+    *,
+    num_pairs=None,
+    panel_size_in=1.25,
+    fmt="pdf",
+    first_index=0,
+    src_color=PUBLISH_SRC_COLOR,
+    tgt_color=PUBLISH_TGT_COLOR,
+    linewidth=1.75,
+):
+    """One vector file per (src, tgt) pair; fixed square canvas, no legend.
+
+    ``fmt`` is passed to matplotlib (``pdf``, ``svg``, ``png``, …). For raster
+    formats, set ``dpi`` via :func:`matplotlib.pyplot.savefig` by passing
+    ``png`` and calling with an env-specific wrapper; PDF/SVG are resolution-
+    independent.
+    """
+    import os
+
+    if V_src.dim() != 3 or V_src.shape[-1] != 2:
+        raise ValueError("save_src_tgt_pair_cells expects V with shape (B, N, 2).")
+
+    os.makedirs(out_dir, exist_ok=True)
+    B = V_src.shape[0]
+    n = B if num_pairs is None else min(int(num_pairs), B)
+    if n < 1:
+        raise ValueError("num_pairs must be at least 1.")
+
+    save_kw = dict(facecolor="white", edgecolor="none")
+    if fmt.lower() != "pdf":
+        save_kw["dpi"] = 600
+
+    written = []
+    for i in range(n):
+        n_s, n_t = int(nv_src[i].item()), int(nv_tgt[i].item())
+        m_s, m_t = int(ne_src[i].item()), int(ne_tgt[i].item())
+        v_s = V_src[i, :n_s].detach().cpu().numpy()
+        v_t = V_tgt[i, :n_t].detach().cpu().numpy()
+        e_s = L_src[i, :m_s].cpu().numpy()
+        e_t = L_tgt[i, :m_t].cpu().numpy()
+
+        fig, ax = plt.subplots(1, 1, figsize=(panel_size_in, panel_size_in))
+        _draw_poly_pair_on_ax(
+            ax,
+            v_s,
+            v_t,
+            e_s,
+            e_t,
+            src_color=src_color,
+            tgt_color=tgt_color,
+            linewidth=linewidth,
+        )
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+        path = os.path.join(out_dir, f"pair_{first_index + i:03d}.{fmt}")
+        fig.savefig(path, bbox_inches=None, pad_inches=0, **save_kw)
+        plt.close(fig)
+        written.append(path)
+
+    return written
 
 
 def plot_polylines_initial_vs_final(

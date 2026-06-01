@@ -43,10 +43,12 @@ vis_cells_format: pdf
 # `record_every` kwarg (e.g. SgdScenario).
 record_deformation:
   enabled: false
-  first_k: 8
+  start_k: 0
+  num_k: 8
   every: 10           # snapshot V every N optimizer iters
   duration_s: 8.0     # target clip length; fps derived as num_frames / duration_s
   filename: deformation.mp4
+  show_matching: true  # overlay matching arrows/colors; set false for plain polyline video
 
 # When set, both src and tgt polylines are uniformly arc-length resampled to M
 # vertices on-device before scenario + metrics. Required for the learned-matcher
