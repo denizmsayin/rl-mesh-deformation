@@ -1,0 +1,71 @@
+defaults:
+  - dataset_src: circle_translated_set
+  - dataset_tgt: shapes_set
+  - _self_
+
+# First K samples in the harness eval subset (same pairing as evaluate_harness).
+num_samples: 16
+eval_num_samples: 32
+seed_src: 0
+seed_tgt: 1
+device: auto
+
+resample_M: 64
+
+panel_size_in: 1.25
+linewidth: 1.25
+fmt: pdf
+
+# Written to <repo>/fig/{init,chamfer,knn}/ when stable_output is true.
+output_dir: fig
+stable_output: true
+
+# Two evaluate_harness configurations to compare side-by-side.
+runs:
+  - label: chamfer
+    matcher:
+      _target_: rlmd.evaluation.matchers.LearnedMatcher
+      feature_extractor:
+        _target_: rlmd.models.PolygonCNN
+        in_channels: 2
+        hidden_channels: [64, 64, 128]
+        out_channels: 128
+        kernel_size: 5
+        layernorm: true
+      temperature: 1.0
+      checkpoint_path: runs/ct2mixed/default_m64_2M/matcher.pt
+      override_temperature: false
+    scenario:
+      _target_: rlmd.evaluation.scenarios.SgdFixedMatchScenario
+      name: sgd_fixed_match
+      num_iters: 400
+      lr: 0.0625
+      momentum: 0.9
+      w_data: 1.0
+      w_edge: 1.0
+      w_normal: 0.01
+      w_laplacian: 0.1
+      distance_p: 2
+
+  - label: knn
+    matcher:
+      _target_: rlmd.evaluation.matchers.Knn3dMatcher
+      bidirectional: true
+    scenario:
+      _target_: rlmd.evaluation.scenarios.SgdScenario
+      name: sgd_default
+      num_iters: 400
+      num_samples: 64
+      lr: 0.0625
+      momentum: 0.9
+      w_chamfer: 1.0
+      w_edge: 1.0
+      w_normal: 0.01
+      w_laplacian: 0.1
+      distance_p: 2
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/export_harness_comparison/${now:%Y-%m-%d}/${now:%H-%M-%S}
