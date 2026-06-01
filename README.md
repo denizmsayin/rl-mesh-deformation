@@ -1,3 +1,6 @@
+[!WARNING]
+> This repository is a prototype and a work-in-progress. It was not meant to be user-friendly. While the core was carefully designed, peripheral components such as visualizers were hastily thrown together and any sustained continuation of use would require a good clean-up. Still, please feel free to fiddle with it!
+
 # rl-mesh-deformation
 
 ## Environment Installation
