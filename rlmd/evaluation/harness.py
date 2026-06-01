@@ -217,16 +217,15 @@ def run(cfg: DictConfig) -> str:
                     record_every=int(record_cfg.every),
                     record_max_batch=k1,
                 )
-                # Pass the source->target matching (first entry) into the
-                # video renderer so it can overlay matching arrows. None for
-                # scenarios that don't have a single fixed matching.
+                # Pass source->target matching into the video renderer. Scenarios
+                # may return a fixed (K, N) Matching list (e.g. fixed-match SGD)
+                # or a per-frame (T, K, N) idx_tgt tensor (e.g. SgdScenario).
                 match_idx_vis = None
-                if (
-                    bool(record_cfg.get("show_matching", True))
-                    and matchings is not None
-                    and len(matchings) > 0
-                ):
-                    match_idx_vis = matchings[0].idx_tgt[k0:k1].detach().cpu()
+                if bool(record_cfg.get("show_matching", True)) and matchings is not None:
+                    if isinstance(matchings, torch.Tensor) and matchings.ndim == 3:
+                        match_idx_vis = matchings[:, k0:k1]
+                    elif isinstance(matchings, list) and len(matchings) > 0:
+                        match_idx_vis = matchings[0].idx_tgt[k0:k1].detach().cpu()
                 video_path = os.path.join(output_dir, str(record_cfg.filename))
                 render_deformation_video(
                     frames[:, k0:k1],

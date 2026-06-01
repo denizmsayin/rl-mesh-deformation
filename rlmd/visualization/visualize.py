@@ -349,13 +349,24 @@ def render_deformation_video(
     frames: (T, K, N, 2) tensor of source vertex positions over time.
     Static targets are drawn once per axis; src segments update each frame.
 
-    When ``match_idx`` is given (shape (K, N) long), the matching is drawn as
-    a per-sample quiver of arrows from current source vertex to V_tgt[match_idx],
-    with source vertices colored by index (turbo cmap) and target vertices
-    colored by the mean color of the source vertices matched to them — same
-    convention as ``visualize_matching(mode='gradient')``.
+    When ``match_idx`` is given, the matching is drawn as a per-sample quiver of
+    arrows from current source vertex to V_tgt[match_idx], with source vertices
+    colored by index (turbo cmap) and target vertices colored by the mean color
+    of the source vertices matched to them — same convention as
+    ``visualize_matching(mode='gradient')``.
+
+    ``match_idx`` may be (K, N) for a fixed correspondence reused every frame,
+    or (T, K, N) to update the matching as the source moves.
     """
     import imageio.v2 as imageio
+
+    def _tgt_colors_from_match(mi, src_colors_i, n_t):
+        tgt_colors_i = np.full((n_t, 4), (0.72, 0.72, 0.72, 0.82), dtype=float)
+        for tj in range(n_t):
+            hits = np.where(mi == tj)[0]
+            if hits.size:
+                tgt_colors_i[tj] = src_colors_i[hits].mean(axis=0)
+        return tgt_colors_i
 
     SRC_COLOR = "#1f77b4"
     TGT_COLOR = "#ff7f0e"
@@ -372,9 +383,18 @@ def render_deformation_video(
 
     has_match = match_idx is not None
     m_np = None
+    time_varying_match = False
     cmap = None
     if has_match:
         m_np = match_idx.cpu().numpy() if hasattr(match_idx, "cpu") else np.asarray(match_idx)
+        if m_np.ndim == 3:
+            time_varying_match = True
+            if m_np.shape[0] != T:
+                raise ValueError(
+                    f"match_idx has T={m_np.shape[0]} but frames has T={T}")
+        elif m_np.ndim != 2:
+            raise ValueError(
+                f"match_idx must be (K, N) or (T, K, N), got shape {m_np.shape}")
         cmap = plt.get_cmap("turbo")
 
     cols = min(4, K)
@@ -384,6 +404,8 @@ def render_deformation_video(
 
     src_collections = []
     src_scatters = []
+    tgt_scatters = []
+    match_src_colors = []
     quivers = []
     for i in range(K):
         ax = axes[i // cols, i % cols]
@@ -404,14 +426,12 @@ def render_deformation_video(
 
         if has_match:
             src_colors_i = cmap(np.linspace(0.0, 1.0, max(n_s, 2)))[:n_s]
-            mi = m_np[i, :n_s]
-            tgt_colors_i = np.full((n_t, 4), (0.72, 0.72, 0.72, 0.82), dtype=float)
-            for tj in range(n_t):
-                hits = np.where(mi == tj)[0]
-                if hits.size:
-                    tgt_colors_i[tj] = src_colors_i[hits].mean(axis=0)
-            ax.scatter(v_t[:, 0], v_t[:, 1], c=tgt_colors_i, s=14, zorder=3,
-                       edgecolors="none")
+            match_src_colors.append(src_colors_i)
+            mi = m_np[0, i, :n_s] if time_varying_match else m_np[i, :n_s]
+            tgt_colors_i = _tgt_colors_from_match(mi, src_colors_i, n_t)
+            tgt_sc = ax.scatter(v_t[:, 0], v_t[:, 1], c=tgt_colors_i, s=14, zorder=3,
+                                edgecolors="none")
+            tgt_scatters.append(tgt_sc)
             sc = ax.scatter(np.zeros(n_s), np.zeros(n_s), c=src_colors_i,
                             s=14, zorder=4, edgecolors="none")
             q = ax.quiver(
@@ -420,10 +440,12 @@ def render_deformation_video(
                 width=0.005, headwidth=3.5, headlength=4.5, alpha=0.55, zorder=3,
             )
             src_scatters.append((sc, n_s))
-            quivers.append((q, mi, v_t, n_s))
+            quivers.append((q, v_t, n_s))
         else:
+            tgt_scatters.append(None)
+            match_src_colors.append(None)
             src_scatters.append((None, n_s))
-            quivers.append((None, None, None, n_s))
+            quivers.append((None, None, n_s))
 
         # Size the window to the target plus the initial and final source
         # frames only. Unstable intermediate iterations can fling vertices far
@@ -454,14 +476,20 @@ def render_deformation_video(
     try:
         for t in range(T):
             iter_text.set_text(f"frame {t + 1}/{T}")
-            for i, ((src_lc, e_s, n_s), (sc, _), (q, mi, v_t_i, _)) in enumerate(
-                    zip(src_collections, src_scatters, quivers)):
+            for i, ((src_lc, e_s, n_s), (sc, _), tgt_sc, src_colors_i, (q, v_t_i, _)) in enumerate(
+                    zip(src_collections, src_scatters, tgt_scatters,
+                        match_src_colors, quivers)):
                 v = frames_np[t, i, :n_s]
                 seg = np.stack((v[e_s[:, 0]], v[e_s[:, 1]]), axis=1)
                 src_lc.set_segments(seg)
                 if sc is not None:
                     sc.set_offsets(v)
                 if q is not None:
+                    mi = m_np[t, i, :n_s] if time_varying_match else m_np[i, :n_s]
+                    if time_varying_match:
+                        n_t = int(nv_t[i])
+                        tgt_sc.set_facecolors(
+                            _tgt_colors_from_match(mi, src_colors_i, n_t))
                     tgt_match = v_t_i[mi]
                     dxy = tgt_match - v
                     q.set_offsets(v)

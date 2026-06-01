@@ -57,10 +57,19 @@ class SgdScenario:
                                    dtype=torch.long, device=V_tgt.device)
 
         frames = [] if record_every is not None else None
+        match_frames = [] if record_every is not None else None
         K = record_max_batch if record_max_batch is not None else V_src.shape[0]
 
         def _snapshot(V_now: torch.Tensor) -> None:
-            frames.append(V_now[:K].detach().to("cpu", copy=True))
+            V_snap = V_now[:K].detach().to("cpu", copy=True)
+            frames.append(V_snap)
+            if match_frames is not None:
+                with torch.no_grad():
+                    ms = matcher(
+                        (V_now[:K], L_src[:K], nv_src[:K], ne_src[:K]),
+                        (V_tgt[:K], L_tgt[:K], nv_tgt[:K], ne_tgt[:K]),
+                    )
+                match_frames.append(ms[0].idx_tgt.detach().cpu())
 
         for i in range(self.num_iters):
             optimizer.zero_grad()
@@ -85,7 +94,5 @@ class SgdScenario:
         V_final = (V_src + deform).detach()
         if frames is not None:
             _snapshot(V_final)
-            # Matchings here are per-iteration and not stored; return None for API
-            # consistency with SgdFixedMatchScenario.
-            return V_final, torch.stack(frames, dim=0), None
+            return V_final, torch.stack(frames, dim=0), torch.stack(match_frames, dim=0)
         return V_final
